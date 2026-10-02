@@ -1,0 +1,16 @@
+# secrets
+.env
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# spike output (may contain session ids and local paths)
+spikes/out/
+
+.kerno
+
+# HTML artifacts
+*.html
