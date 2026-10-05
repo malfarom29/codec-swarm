@@ -18,7 +18,7 @@ Feature: M4 dashboard
   Scenario: Starting a mission from the form runs it to its first gate
     Given I am signed in
     When I start mission CODEC-1700 "Add from_cents" on codec-swarm-sandbox in gated mode
-    Then the mission board lists CODEC-1700 under planning
+    Then the mission board lists CODEC-1700 under spec
     And the inbox shows the spec gate of CODEC-1700
 
   Scenario: Approving gates from the inbox takes a mission to PR ready
@@ -37,6 +37,13 @@ Feature: M4 dashboard
     Then it shows lane codec-swarm-sandbox waiting at the pr gate
     And it shows the judge's verdict for lane codec-swarm-sandbox
     And it shows the agent output of lane codec-swarm-sandbox
+
+  Scenario: The board by agent shows a lane at a gate under Waiting on you
+    Given I am signed in
+    And mission CODEC-1704 "Add from_cents" on codec-swarm-sandbox is waiting at its pr gate
+    When I open "/?view=agents"
+    Then the Waiting on you column holds lane codec-swarm-sandbox of CODEC-1704
+    And the board shows 1 gate waiting on me
 
   Scenario: The live feed tells the page when something changed
     Given I am signed in

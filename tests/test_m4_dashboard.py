@@ -141,26 +141,40 @@ def mission_page(web, ticket):
     web["page"] = web["client"].get(f"/missions/{ticket}").text
 
 
-def _lane_html(web, repo):
+def _section(web, marker, end):
     html = web["page"]
-    start = html.index(f'data-lane="{repo}"')
-    return html[start : html.index("</section>", start)]
+    start = html.index(marker)
+    return html[start : html.index(end, start)]
 
 
 @then(parsers.parse("it shows lane {repo} waiting at the pr gate"))
 def lane_waiting(web, repo):
-    lane = _lane_html(web, repo)
-    assert 'data-status="waiting"' in lane and "pr gate" in lane
+    row = _section(web, f'class="lanerow" data-lane="{repo}"', "</div>\n  </div>")
+    assert 'data-status="waiting"' in row and "pr gate" in row
 
 
 @then(parsers.parse("it shows the judge's verdict for lane {repo}"))
 def lane_verdict(web, repo):
-    assert "data-verdict" in _lane_html(web, repo) and "approve band" in _lane_html(web, repo)
+    dod = _section(web, f'data-dod="{repo}"', "</section>")
+    assert "data-verdict" in dod and "approve band" in dod
 
 
 @then(parsers.parse("it shows the agent output of lane {repo}"))
 def lane_output(web, repo):
-    assert "backend-coder› backend-coder working on" in _lane_html(web, repo)
+    terminal = _section(web, f'data-lane="{repo}" data-role="backend-coder"', "</section>")
+    assert "› backend-coder working on" in terminal
+
+
+@then(parsers.parse("the Waiting on you column holds lane {lane} of {ticket}"))
+def waiting_column(web, lane, ticket):
+    html = web["response"].text
+    column = html[html.index('data-agent="waiting"') :]
+    assert f'data-ticket="{ticket}" data-lane="{lane}"' in column
+
+
+@then(parsers.parse("the board shows {count:d} gate waiting on me"))
+def kpi_waiting(web, count):
+    assert re.search(rf"<span>Waiting on you</span><b>{count}</b>", web["response"].text)
 
 
 @when("I read the live feed since event 0 once")

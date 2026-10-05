@@ -75,3 +75,49 @@ th { font-family: var(--mono); font-size: 11.5px; color: var(--green); font-weig
 .tablewrap { overflow-x: auto; }
 @media (max-width: 760px) { .shell { grid-template-columns: 1fr; } nav.side { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--dim); } nav.side .foot { display: none; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+[x-cloak] { display: none !important; }
+.muted { color: var(--muted); font-size: 12px; }
+.head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1px solid var(--dim); border-radius: 6px; overflow: hidden; margin-bottom: 20px; }
+.seg a { padding: 6px 14px; color: var(--muted); font-size: 13px; }
+.seg a.on { background: var(--green); color: var(--bg); text-decoration: none; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 2px; }
+.kpi span { color: var(--muted); font-size: 12px; }
+.kpi b { font: 700 22px var(--mono); color: var(--freq); }
+.kpi b i { font: 400 13px var(--sans); color: var(--muted); font-style: normal; }
+.kpi small { color: var(--faint); font-size: 12px; }
+.kpi.attn { border-color: var(--amber); }
+.kpi.attn b { color: var(--amber); }
+.board { grid-template-columns: repeat(6, minmax(190px, 1fr)); }
+.board.agents { grid-template-columns: repeat(7, minmax(170px, 1fr)); }
+.col.waiting { border-color: rgba(255, 181, 71, .35); }
+.hint { margin: -6px 0 10px; color: var(--faint); font-size: 11.5px; }
+.lanelist { display: grid; gap: 3px; margin: 6px 0; }
+.lanelist div { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 6px; align-items: center; font-size: 12px; }
+.lanelist .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.dot.s-spec { background: var(--fg); } .dot.s-build, .dot.s-pr_ready { background: var(--green); } .dot.s-review { background: var(--amber); } .dot.s-judge { background: var(--freq); } .dot.s-blocked { background: var(--red); }
+.lanerow { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.lanerow:first-of-type { border-top: 0; }
+.lanerow .right { display: flex; gap: 8px; align-items: center; }
+.steps { list-style: none; display: flex; gap: 6px; margin: 0; padding: 0; flex-wrap: wrap; }
+.steps li { font: 12px var(--mono); padding: 2px 8px; border-radius: 3px; color: var(--faint); border: 1px solid var(--line); }
+.steps li.done { color: var(--green); border-color: var(--dim); }
+.steps li.now { color: var(--bg); background: var(--freq); border-color: var(--freq); }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--dim); margin: 18px 0 14px; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted); padding: 8px 12px; }
+.tabs button.on { color: var(--green); border-bottom-color: var(--green); }
+.dod { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 20px; }
+.layer { font: 11.5px var(--mono); color: var(--green); text-transform: uppercase; letter-spacing: .05em; margin: 10px 0 6px; }
+.layer:first-child { margin-top: 0; }
+.check { font: 12.5px var(--mono); padding: 3px 0; }
+.check.bad { color: var(--red); }
+.scen { display: grid; grid-template-columns: minmax(0, 1fr) 120px 40px; gap: 10px; align-items: center; padding: 4px 0; font-size: 13px; border-top: 1px solid var(--line); }
+.bar { height: 6px; background: rgba(141, 184, 160, .15); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; }
+.bar i.ok { background: var(--green); } .bar i.warn { background: var(--amber); } .bar i.bad { background: var(--red); }
+.verdictbox { border-left: 1px solid var(--line); padding-left: 16px; }
+.score { font: 700 40px var(--mono); color: var(--freq); line-height: 1.1; margin-bottom: 6px; }
+@media (max-width: 760px) { .lanerow, .dod { grid-template-columns: 1fr; } .verdictbox { border-left: 0; padding-left: 0; } }

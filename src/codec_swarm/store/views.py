@@ -8,6 +8,20 @@ from codec_swarm.store.events import Event
 
 PLANNING = ""  # gate events from the planning thread carry an empty lane
 
+# Board columns by stage, in order: a mission sits in the column of its least advanced lane.
+STAGES = ("spec", "build", "review", "judge", "pr_ready")
+ROLE_STAGE = {"specifier": "spec", "architect": "spec", "backend-coder": "build", "frontend-coder": "build", "coder": "build",
+              "reviewer": "review", "hardener": "review", "qa": "review"}
+
+
+class RoleStats(BaseModel):
+    role: str
+    model: str | None = None
+    steps: int = 0
+    turns: int = 0
+    cost_usd: float = 0.0
+    sent_back: int = 0
+
 
 class GateView(BaseModel):
     ticket: str
@@ -26,6 +40,19 @@ class LaneView(BaseModel):
     verdicts: list[dict] = []
     current_role: str | None = None
     after: list[str] = []
+    roles: dict[str, RoleStats] = {}
+
+    @property
+    def stage(self) -> str:
+        if self.status == "failed":
+            return "blocked"
+        if self.status == "pr_ready":
+            return "pr_ready"
+        if self.gate and self.gate.kind in ("review", "pr"):
+            return "judge"
+        if self.status == "not_started":
+            return "spec"
+        return ROLE_STAGE.get(self.current_role or "", "build")
 
 
 class MissionView(BaseModel):
@@ -36,9 +63,11 @@ class MissionView(BaseModel):
     pack: str | None = None
     jev: bool | None = None
     autonomy: str | None = None
-    stage: str = "planning"  # planning | building | review | pr_ready | blocked
+    stage: str = "spec"  # spec | build | review | judge | pr_ready | blocked
     planning_gate: GateView | None = None
     lanes: dict[str, LaneView] = {}
+    planning_roles: dict[str, RoleStats] = {}
+    planning_role: str | None = None  # the planning role working right now, if any
     blocked: str | None = None
     cost_usd: float = 0.0
     started_at: str = ""
@@ -66,6 +95,12 @@ def mission_view(events: list[Event]) -> MissionView:
             view.lanes = {r: LaneView(repo=r) for r in view.repos}
         elif e.kind == "cost":
             view.cost_usd += p.get("cost_usd") or 0.0
+            if e.role and (stats := _role_stats(view, p, e.role)) is not None:
+                stats.turns += p.get("turns") or 0
+                stats.cost_usd += p.get("cost_usd") or 0.0
+        elif e.kind == "decision" and p.get("slot") == "model" and e.role:
+            if (stats := _role_stats(view, p, e.role)) is not None:
+                stats.model = p.get("next")
         elif e.kind == "lane.started":
             lane = view.lanes.setdefault(p["lane"], LaneView(repo=p["lane"]))
             lane.status, lane.after = "running", list(p.get("after") or [])
@@ -85,6 +120,15 @@ def mission_view(events: list[Event]) -> MissionView:
             view.lanes.setdefault(lane, LaneView(repo=lane)).verdicts.append(p)
         elif e.kind in ("agent.message", "agent.tool", "handoff") and e.role and (lane := _lane_of(p, view)):
             view.lanes.setdefault(lane, LaneView(repo=lane)).current_role = e.role
+        elif e.kind in ("agent.message", "agent.tool") and e.role and p.get("lane") == PLANNING:
+            view.planning_role = e.role
+        if e.kind == "handoff" and e.role and (stats := _role_stats(view, p, e.role)) is not None:
+            stats.steps += 1
+            stats.sent_back += bool(p.get("send_back"))
+            if p.get("lane") == PLANNING:
+                view.planning_role = None
+        if e.kind == "mission.planned":
+            view.planning_role = None
         elif e.kind == "mission.done":
             lane = _lane_of(p, view) or next((r for r, ln in view.lanes.items() if ln.status != "pr_ready"), None)
             if lane:
@@ -111,13 +155,19 @@ def _lane_of(payload: dict, view: MissionView, gate_kind: str | None = None) -> 
     return view.repos[0] if len(view.repos) == 1 else None
 
 
+def _role_stats(view: MissionView, payload: dict, role: str) -> RoleStats | None:
+    if payload.get("lane") == PLANNING and role in ROLE_STAGE and ROLE_STAGE[role] == "spec":
+        return view.planning_roles.setdefault(role, RoleStats(role=role))
+    lane = _lane_of(payload, view)
+    if not lane:
+        return None
+    return view.lanes.setdefault(lane, LaneView(repo=lane)).roles.setdefault(role, RoleStats(role=role))
+
+
 def _stage(view: MissionView) -> str:
+    """The least advanced lane's stage; blocked wins, and nothing started yet is still spec."""
     if view.blocked or any(lane.status == "failed" for lane in view.lanes.values()):
         return "blocked"
-    if view.lanes and all(lane.status == "pr_ready" for lane in view.lanes.values()):
-        return "pr_ready"
-    if any(lane.gate and lane.gate.kind in ("review", "pr") for lane in view.lanes.values()):
-        return "review"
-    if any(lane.status != "not_started" for lane in view.lanes.values()):
-        return "building"
-    return "planning"
+    if not view.lanes:
+        return "spec"
+    return min((lane.stage for lane in view.lanes.values()), key=STAGES.index)

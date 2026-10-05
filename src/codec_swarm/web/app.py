@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from datetime import UTC, datetime
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,8 @@ from codec_swarm.store.views import MissionView, mission_view
 
 HERE = Path(__file__).parent
 COOKIE = "codec_session"
-STAGES = [("planning", "Planning"), ("building", "Building"), ("review", "Waiting on you"), ("pr_ready", "PR ready"), ("blocked", "Blocked")]
+STAGES = [("spec", "Spec", "Gherkin"), ("build", "Build", "TDD"), ("review", "Review", "code and QA"), ("judge", "Judge", "Definition of Done"), ("pr_ready", "PR ready", "branch-flow"), ("blocked", "Blocked", "failed or stuck")]
+AGENTS = [("specifier", "Specifier"), ("architect", "Architect"), ("backend-coder", "Backend coder"), ("frontend-coder", "Frontend coder"), ("coder", "Coder (Solo)"), ("reviewer", "Reviewer"), ("hardener", "Hardener"), ("qa", "QA")]
 GATE_BAND = (0.90, 0.03)  # command gate threshold and margin, as measured in spikes/jev_command_gate.py
 
 
@@ -52,22 +54,29 @@ def _line(e: Event) -> str | None:
     return None
 
 
-def _terminal(events: list[Event], repo: str, limit: int = 80) -> list[str]:
-    lines = []
+def _terminals(events: list[Event], repo: str, limit: int = 80) -> dict[str, list[str]]:
+    """Each role's output in one lane, like the terminal it ran in."""
+    by_role: dict[str, list[str]] = {}
     for e in events:
-        p = e.payload
-        if p.get("lane") != repo:
-            continue
-        if e.kind == "agent.message":
-            lines.append(f"{e.role}› {(p.get('text') or '').strip()}")
-        elif e.kind == "agent.tool":
-            detail = p.get("input", {}).get("command") or p.get("input", {}).get("file_path") or ""
-            lines.append(f"{e.role}  ● {p.get('tool')} {detail}".rstrip())
-        elif e.kind == "gate.decision" and p.get("action") != "allow":
-            lines.append(f"{e.role}  ▲ gate {p.get('action')}: {p.get('reason')}")
-        elif e.kind == "cost":
-            lines.append(f"{e.role}  ✓ {p.get('turns')} turns · ${p.get('cost_usd') or 0:.3f}")
-    return lines[-limit:]
+        if e.payload.get("lane") == repo and e.role:
+            line = _terminal_line(e)
+            if line:
+                by_role.setdefault(e.role, []).append(line)
+    return {role: lines[-limit:] for role, lines in by_role.items()}
+
+
+def _terminal_line(e: Event) -> str | None:
+    p = e.payload
+    if e.kind == "agent.message":
+        return f"› {(p.get('text') or '').strip()}"
+    if e.kind == "agent.tool":
+        detail = p.get("input", {}).get("command") or p.get("input", {}).get("file_path") or ""
+        return f"● {p.get('tool')} {detail}".rstrip()
+    if e.kind == "gate.decision" and p.get("action") != "allow":
+        return f"▲ gate {p.get('action')}: {p.get('reason')}"
+    if e.kind == "cost":
+        return f"✓ {p.get('turns')} turns · ${p.get('cost_usd') or 0:.3f}"
+    return None
 
 
 def create_app(service: MissionService, token: str) -> FastAPI:
@@ -93,12 +102,42 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         tickets = sorted({e.mission for e in service.events.list() if e.kind == "mission.started"}, reverse=True)
         return [mission_view(service.events.list(t)) for t in tickets]
 
+    def kpis(ms: list[MissionView]) -> dict[str, Any]:
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        cost_today = sum(e.payload.get("cost_usd") or 0.0 for e in service.events.list() if e.kind == "cost" and e.created_at.startswith(today))
+        lanes = [lane for m in ms for lane in m.lanes.values() if lane.verdicts]
+        approved = [lane for lane in lanes if lane.verdicts[-1].get("band") == "approve"]
+        return {
+            "in_progress": sum(m.stage not in ("pr_ready",) for m in ms),
+            "waiting": sum(len(m.open_gates) for m in ms),
+            "agents": sum(1 for m in ms for lane in m.lanes.values() if lane.status == "running") + sum(1 for m in ms if m.planning_role),
+            "approved": len(approved),
+            "judged": len(lanes),
+            "cost_today": cost_today,
+        }
+
+    def agent_cards(ms: list[MissionView]) -> dict[str, list[dict[str, Any]]]:
+        """One card per active lane, in its current role's column; anything at a gate waits on me."""
+        cards: dict[str, list[dict[str, Any]]] = {key: [] for key, _ in AGENTS} | {"waiting": []}
+        for m in ms:
+            if m.planning_gate:
+                cards["waiting"].append({"m": m, "lane": "", "gate": m.planning_gate})
+            elif m.planning_role in cards:
+                cards[m.planning_role].append({"m": m, "lane": "planning", "gate": None})
+            for repo, lane in m.lanes.items():
+                if lane.gate:
+                    cards["waiting"].append({"m": m, "lane": repo, "gate": lane.gate})
+                elif lane.status == "running" and lane.current_role in cards:
+                    cards[lane.current_role].append({"m": m, "lane": repo, "gate": None})
+        return cards
+
     def last_id() -> int:
         rows = service.events.list()
         return rows[-1].id if rows else 0
 
     def render(request: Request, name: str, **context: Any) -> HTMLResponse:
-        return templates.TemplateResponse(request, name, {"last_id": last_id(), "jev_on": jev_available(), **context})
+        css_version = int((HERE / "static" / "codec.css").stat().st_mtime)  # a changed stylesheet is never served from cache
+        return templates.TemplateResponse(request, name, {"last_id": last_id(), "jev_on": jev_available(), "css_v": css_version, **context})
 
     async def in_background(ticket: str, work: Callable[[], Awaitable[Any]]) -> None:
         try:
@@ -108,13 +147,17 @@ def create_app(service: MissionService, token: str) -> FastAPI:
 
     # --- pages ----------------------------------------------------------------
 
+    def board_context(view: str) -> dict[str, Any]:
+        ms = missions()
+        return {"stages": STAGES, "agents": AGENTS, "missions": ms, "view": view, "kpis": kpis(ms), "cards": agent_cards(ms)}
+
     @app.get("/", response_class=HTMLResponse)
-    async def board(request: Request):
-        return render(request, "board.html", stages=STAGES, missions=missions())
+    async def board(request: Request, view: str = "stage"):
+        return render(request, "board.html", **board_context(view))
 
     @app.get("/partials/board", response_class=HTMLResponse)
-    async def board_partial(request: Request):
-        return render(request, "_board.html", stages=STAGES, missions=missions())
+    async def board_partial(request: Request, view: str = "stage"):
+        return render(request, "_board.html", **board_context(view))
 
     @app.get("/inbox", response_class=HTMLResponse)
     async def inbox(request: Request):
@@ -128,8 +171,9 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         events = service.events.list(ticket)
         view = mission_view(events)
         activity = [(e.created_at[11:19], line) for e in events if (line := _line(e))][-60:][::-1]
-        terminals = {repo: _terminal(events, repo) for repo in view.lanes}
-        return {"m": view, "activity": activity, "terminals": terminals}
+        terminals = {repo: _terminals(events, repo) for repo in view.lanes}
+        stage_index = {key: i for i, (key, _, _) in enumerate(STAGES)}
+        return {"m": view, "activity": activity, "agent_terminals": terminals, "stages": STAGES, "stage_index": stage_index}
 
     @app.get("/missions/new", response_class=HTMLResponse)
     async def new_mission(request: Request):
