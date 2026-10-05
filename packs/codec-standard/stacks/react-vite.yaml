@@ -1,0 +1,15 @@
+stack: react-vite
+branch_flow:
+  base: develop
+  branch: "feature/{ticket}-{slug}"
+checks:
+  - id: unit
+    run: pnpm vitest run
+  - id: lint
+    run: pnpm lint
+  - id: build
+    run: pnpm build
+allowlist:
+  - pnpm vitest run
+  - pnpm lint
+  - pnpm build

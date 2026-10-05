@@ -12,7 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from codec_swarm.domain import Autonomy, Band, GateKind, Handoff, JudgeBands, Mission, Pack
-from codec_swarm.plugins.api import AgentBackend, EventSink, Judge, Router, StepRequest
+from codec_swarm.plugins.api import AgentBackend, EventSink, HandoffRecorder, Judge, Router, StepRequest
 
 APPROVE = "approve"
 SEND_BACK = "send_back"
@@ -32,7 +32,14 @@ def _mission(state: MissionState) -> Mission:
     return Mission.model_validate(state["mission"])
 
 
-def build_graph(pack: Pack, backend: AgentBackend, router: Router, judge: Judge, events: EventSink) -> StateGraph:
+def build_graph(
+    pack: Pack,
+    backend: AgentBackend,
+    router: Router,
+    judge: Judge,
+    events: EventSink,
+    recorder: HandoffRecorder | None = None,
+) -> StateGraph:
     graph = StateGraph(MissionState)
 
     def role_node(role: str):
@@ -48,6 +55,10 @@ def build_graph(pack: Pack, backend: AgentBackend, router: Router, judge: Judge,
                 raise RuntimeError(f"{role} ended its step without a handoff")
             decision = router.next_role(pack, role, handoff)
             events.append(mission.ticket, "decision", decision.model_dump(), role=role)
+            if recorder is not None:
+                step = len(state.get("handoffs", [])) + 1
+                sha = recorder.record(mission, step, handoff, decision.next)
+                handoff = handoff.model_copy(update={"commit_sha": sha})
             return {"trail": [role], "handoffs": [handoff.model_dump()], "next": decision.next}
 
         return run

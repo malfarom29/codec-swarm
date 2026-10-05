@@ -65,10 +65,11 @@ class Mission(BaseModel, frozen=True):
     bands: JudgeBands | None = None
 
 
-class Handoff(BaseModel, frozen=True):
+class Handoff(BaseModel, frozen=True, str_strip_whitespace=True):
     from_role: str
     summary: str
     send_back: bool = False
+    commit_message: str = ""  # Conventional Commits message for the step's code changes; the orchestrator commits
     files_touched: tuple[str, ...] = ()
     commit_sha: str | None = None
     questions: tuple[str, ...] = ()

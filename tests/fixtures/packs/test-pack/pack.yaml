@@ -1,0 +1,9 @@
+# Minimal pack for live adapter tests: no MCP servers or skills to install, small turn limits.
+name: test-pack
+planning_roles: [specifier, architect]
+lane_roles: [backend-coder, reviewer, hardener, qa]
+mcp_catalog: {}
+roles:
+  backend-coder:
+    model: haiku
+    max_turns: 8

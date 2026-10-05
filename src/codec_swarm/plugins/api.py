@@ -36,6 +36,12 @@ class Judge(Protocol):
     async def evaluate(self, mission: Mission, handoffs: list[Handoff]) -> Verdict: ...
 
 
+class HandoffRecorder(Protocol):
+    """Persists a handoff once the router has picked the next role; returns the commit sha, if any."""
+
+    def record(self, mission: Mission, step: int, handoff: Handoff, to_role: str) -> str | None: ...
+
+
 class EventSink(Protocol):
     """Where the engine writes its append-only event log."""
 

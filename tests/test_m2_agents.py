@@ -1,0 +1,240 @@
+"""Step definitions for features/m2_agents.feature. Only the @live scenario calls Claude Code."""
+
+from pathlib import Path
+
+import anyio
+import pytest
+import yaml
+from pytest_bdd import given, parsers, scenarios, then, when
+
+from codec_swarm.domain import Autonomy, Handoff, Mission
+from codec_swarm.harness import BranchFlow, LocalOverrides, MissionExtras, load_pack, load_repo_config, resolve_session
+from codec_swarm.plugins.api import StepRequest
+from codec_swarm.plugins.claude_code import ClaudeCodeBackend
+from codec_swarm.plugins.gate import AllowlistGate, GateContext
+from codec_swarm.store import SessionStore
+from codec_swarm.workspace import Workspace, git
+
+scenarios("../features/m2_agents.feature")
+
+TEST_PACK = Path(__file__).parent / "fixtures" / "packs" / "test-pack"
+
+
+@pytest.fixture
+def world(tmp_path):
+    return {"tmp": tmp_path}
+
+
+def _commit(repo: Path, message: str) -> None:
+    git(repo, "-c", "user.name=test", "-c", "user.email=test@localhost", "commit", "--quiet", "-m", message)
+
+
+# --- harness ---------------------------------------------------------------
+
+
+@given("the Codec standard pack from packs/codec-standard")
+def codec_pack(world):
+    world["pack"] = load_pack("codec-standard")
+
+
+@given(parsers.parse("a nestjs repo whose config adds the {server} MCP server for the {role}"))
+def repo_with_config(world, server, role):
+    repo = world["tmp"] / "repo"
+    (repo / ".swarm").mkdir(parents=True)
+    config = {"version": 1, "stack": "nestjs", "roles": {role: {"extra_mcp": [server]}}}
+    (repo / ".swarm" / "config.yaml").write_text(yaml.safe_dump(config))
+    world["repo"] = repo
+
+
+@given("a nestjs repo with no config")
+def repo_without_config(world):
+    world["repo"] = world["tmp"] / "repo"
+    world["repo"].mkdir()
+    world["stack"] = "nestjs"
+
+
+def _resolve(world, role, extras=MissionExtras()):
+    config = load_repo_config(world["repo"], world["pack"], stack=world.get("stack"))
+    mission = Mission(ticket="CODEC-1423", repo="codec-payment", title="Partial refunds")
+    world["spec"] = resolve_session(world["pack"], config, role, world["repo"], mission, extras)
+
+
+@when(parsers.parse("the harness resolves the {role} session for lane CODEC-1423 on codec-payment"))
+def resolves(world, role):
+    _resolve(world, role)
+
+
+@when(parsers.parse("the harness resolves the {role} session with the mission extra MCP server {server}"))
+def resolves_with_extra(world, role, server):
+    _resolve(world, role, MissionExtras(mcp=(server,)))
+
+
+@then(parsers.parse("the session runs in the lane worktree with model {model}"))
+def runs_in_worktree(world, model):
+    assert world["spec"].cwd == world["repo"]
+    assert world["spec"].model == model
+
+
+@then("the system prompt holds the core, stack and role layers in that order")
+def layers_in_order(world):
+    prompt = world["spec"].system_prompt
+    positions = [prompt.index(h) for h in ("# Layer 1 · Core", "# Layer 3 · Stack: NestJS", "# Layer 4 · Role: Backend coder", "# Layer 5 · Mission")]
+    assert positions == sorted(positions)
+
+
+@then(parsers.parse("the session MCP servers are {servers}"))
+def mcp_servers(world, servers):
+    assert list(world["spec"].mcp_servers) == [s.strip() for s in servers.replace(" and ", ",").split(",")]
+
+
+@then("no tool is pre-approved")
+def no_preapproved(world):
+    assert world["spec"].allowed_tools == ()
+
+
+@then("the reviewer still loads the code-review and security-review skills")
+def reviewer_skills(world):
+    assert {"code-review", "security-review"} <= set(world["spec"].skills)
+
+
+@then("MCP secrets are still ${env:...} references")
+def secrets_unresolved(world):
+    assert world["spec"].mcp_servers["sentry"]["headers"]["Authorization"] == "Bearer ${env:SENTRY_TOKEN}"
+
+
+# --- workspace -------------------------------------------------------------
+
+
+@given("a local origin repo with a develop branch")
+def origin_repo(world):
+    seed = world["tmp"] / "seed"
+    seed.mkdir()
+    git(seed, "init", "--quiet", "-b", "develop")
+    (seed / "README.md").write_text("# codec-payment\n")
+    git(seed, "add", "README.md")
+    _commit(seed, "chore: initial commit")
+    git(world["tmp"], "clone", "--quiet", "--bare", str(seed), "origin.git")
+    world["origin"] = str(world["tmp"] / "origin.git")
+    world["workspace"] = Workspace(world["tmp"] / "codec-swarm")
+
+
+@when(parsers.parse('the workspace prepares lane {ticket} "{title}"'))
+@given(parsers.parse('the workspace prepared lane {ticket} "{title}"'))
+def prepares_lane(world, ticket, title):
+    world["lane"] = world["workspace"].prepare_lane(world["origin"], "codec-payment", ticket, title, BranchFlow(base="develop"))
+    world["title"] = title
+
+
+@then(parsers.parse("the lane worktree is on branch {branch}"))
+def on_branch(world, branch):
+    assert git(world["lane"].path, "branch", "--show-current") == branch
+
+
+@then("the branch starts from origin/develop")
+def from_develop(world):
+    assert git(world["lane"].path, "rev-parse", "HEAD") == git(world["lane"].path, "rev-parse", "origin/develop")
+
+
+@given("the backend-coder changed src/refunds.ts")
+def changed_file(world):
+    (world["lane"].path / "src").mkdir()
+    (world["lane"].path / "src" / "refunds.ts").write_text("export const refund = () => {};\n")
+
+
+@when(parsers.parse('the backend-coder hands off to the reviewer with commit message "{message}"'))
+def hands_off(world, message):
+    handoff = Handoff(
+        from_role="backend-coder",
+        summary="Added POST /refunds with an idempotency key.",
+        commit_message=message,
+        files_touched=("src/refunds.ts",),
+    )
+    world["sha"] = world["workspace"].record_handoff(world["lane"], 1, handoff, "reviewer")
+
+
+@then(".swarm/handoffs holds the handoff as markdown")
+def handoff_file(world):
+    text = (world["lane"].path / ".swarm" / "handoffs" / "01-backend-coder-reviewer.md").read_text()
+    assert text.startswith("# Handoff: backend-coder → reviewer")
+    assert "`src/refunds.ts`" in text
+
+
+@then(parsers.parse('the lane\'s last commits are "{code}" then "{handoff}"'))
+def last_commits(world, code, handoff):
+    assert git(world["lane"].path, "log", "-2", "--format=%s").splitlines() == [handoff, code]
+    assert git(world["lane"].path, "status", "--porcelain") == ""
+
+
+# --- command gate ----------------------------------------------------------
+
+
+@given(parsers.parse('the command gate with the repo allowlist "{allowlist}"'))
+def command_gate(world, allowlist):
+    world["gate"] = AllowlistGate(tuple(allowlist.split(",")))
+    world["ctx"] = GateContext(ticket="CODEC-1423", role="backend-coder", worktree=world["tmp"], autonomy=Autonomy.AUTO)
+
+
+@when(parsers.parse('an agent asks to run "{command}" in Auto mode'))
+def asks_to_run(world, command):
+    world["decision"] = world["gate"].decide("Bash", {"command": command}, world["ctx"])
+
+
+@then(parsers.parse("the gate answers {answer}"))
+def gate_answers(world, answer):
+    assert world["decision"].action.value == answer, world["decision"]
+
+
+@then(parsers.parse('reading "{path}" is {verdict}'))
+def reading(world, path, verdict):
+    action = world["gate"].decide("Read", {"file_path": path}, world["ctx"]).action.value
+    assert action == {"allowed": "allow", "denied": "deny"}[verdict]
+
+
+@then(parsers.parse('writing "{path}" is {verdict}'))
+def writing(world, path, verdict):
+    action = world["gate"].decide("Write", {"file_path": path, "content": "x"}, world["ctx"]).action.value
+    assert action == {"allowed": "allow", "denied": "deny"}[verdict]
+
+
+# --- live Claude Code step -------------------------------------------------
+
+
+@when("the backend-coder runs one real step with Haiku")
+def real_step(world):
+    pack = load_pack(TEST_PACK)
+    lane = world["lane"]
+    mission = Mission(ticket=lane.ticket, repo=lane.repo, title=world["title"], autonomy=Autonomy.AUTO)
+    config = load_repo_config(lane.path, pack, stack="python")
+    world["sessions"] = SessionStore(world["tmp"] / "swarm.db")
+
+    def session_for(m, role):
+        return resolve_session(pack, config, role, lane.path, m, overrides=LocalOverrides(model="haiku"))
+
+    backend = ClaudeCodeBackend(session_for, AllowlistGate(config.allowlist), world["sessions"])
+
+    async def collect():
+        return [e async for e in backend.run_step(StepRequest(mission=mission, role="backend-coder"))]
+
+    world["mission"] = mission
+    world["events"] = anyio.run(collect)
+
+
+@then("the step ends with a handoff event from the backend-coder")
+def ends_with_handoff(world):
+    last = world["events"][-1]
+    assert last.kind == "handoff" and last.role == "backend-coder"
+    world["handoff"] = Handoff.model_validate(last.payload)
+    assert world["handoff"].summary
+
+
+@then("the lane stores the session id for the backend-coder")
+def stores_session(world):
+    assert world["sessions"].get(world["mission"].ticket, world["mission"].repo, "backend-coder")
+
+
+@then("the orchestrator commits HEALTH.md and the handoff")
+def health_committed(world):
+    world["workspace"].record_handoff(world["lane"], 1, world["handoff"], "reviewer")
+    assert git(world["lane"].path, "log", "-1", "--format=%s") == "chore(swarm): backend-coder handoff"
+    assert "HEALTH.md" in git(world["lane"].path, "log", "-1", "--skip=1", "--name-only", "--format=")
+    assert world["handoff"].commit_message

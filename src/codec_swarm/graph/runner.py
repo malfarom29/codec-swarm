@@ -14,7 +14,7 @@ from langgraph.types import Command
 
 from codec_swarm.domain import Mission, Pack
 from codec_swarm.graph.build import build_graph
-from codec_swarm.plugins.api import AgentBackend, EventSink, Judge, Router
+from codec_swarm.plugins.api import AgentBackend, EventSink, HandoffRecorder, Judge, Router
 
 
 @dataclass(frozen=True)
@@ -27,10 +27,19 @@ class RunResult:
 class MissionRunner:
     """One graph definition; every call opens the checkpointer, so a new runner can pick up any mission."""
 
-    def __init__(self, db_path: Path, pack: Pack, backend: AgentBackend, router: Router, judge: Judge, events: EventSink):
+    def __init__(
+        self,
+        db_path: Path,
+        pack: Pack,
+        backend: AgentBackend,
+        router: Router,
+        judge: Judge,
+        events: EventSink,
+        recorder: HandoffRecorder | None = None,
+    ):
         self._db_path = db_path
         self._events = events
-        self._builder = build_graph(pack, backend, router, judge, events)
+        self._builder = build_graph(pack, backend, router, judge, events, recorder)
 
     @asynccontextmanager
     async def _graph(self) -> AsyncIterator[CompiledStateGraph]:

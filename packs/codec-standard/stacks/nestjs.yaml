@@ -1,0 +1,16 @@
+# Default .swarm/config.yaml for NestJS repos; a repo's own config overrides any key.
+stack: nestjs
+branch_flow:
+  base: develop
+  branch: "feature/{ticket}-{slug}"
+checks:
+  - id: unit
+    run: npm run test
+  - id: lint
+    run: npm run lint
+  - id: build
+    run: npm run build
+allowlist:
+  - npm run test
+  - npm run lint
+  - npm run build

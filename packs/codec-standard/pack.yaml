@@ -1,0 +1,63 @@
+# Codec standard pack: 6 agent roles plus the judge, which the orchestrator runs itself.
+name: codec-standard
+planning_roles: [specifier, architect]
+lane_roles: [backend-coder, reviewer, hardener, qa]
+max_rework: 2
+
+# MCP servers roles can load. Secrets stay as ${env:NAME} until a session starts.
+mcp_catalog:
+  atlassian:
+    type: http
+    url: https://mcp.atlassian.com/v1/mcp
+    headers:
+      Authorization: "Bearer ${env:ATLASSIAN_TOKEN}"
+  context7:
+    type: stdio
+    command: npx
+    args: ["-y", "@upstash/context7-mcp"]
+  playwright:
+    type: stdio
+    command: npx
+    args: ["-y", "@playwright/mcp@latest"]
+  sentry:
+    type: http
+    url: https://mcp.sentry.dev/mcp
+    headers:
+      Authorization: "Bearer ${env:SENTRY_TOKEN}"
+
+roles:
+  specifier:
+    model: opus
+    mcp: [atlassian]
+    skills: []
+    max_turns: 30
+  architect:
+    model: opus
+    mcp: [context7]
+    skills: [code-review]
+    max_turns: 30
+  backend-coder:
+    model: sonnet
+    mcp: [context7]
+    skills: [tdd]
+    max_turns: 80
+  frontend-coder:
+    model: sonnet
+    mcp: [context7]
+    skills: [tdd]
+    max_turns: 80
+  reviewer:
+    model: sonnet
+    mcp: []
+    skills: [code-review, security-review]
+    max_turns: 40
+  hardener:
+    model: haiku
+    mcp: []
+    skills: [mutation-testing, tdd]
+    max_turns: 60
+  qa:
+    model: sonnet
+    mcp: [playwright]
+    skills: [tdd]
+    max_turns: 60

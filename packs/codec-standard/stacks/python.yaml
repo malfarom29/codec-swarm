@@ -1,0 +1,9 @@
+stack: python
+branch_flow:
+  base: main
+  branch: "feature/{ticket}-{slug}"
+checks:
+  - id: unit
+    run: uv run pytest -q
+allowlist:
+  - uv run pytest
