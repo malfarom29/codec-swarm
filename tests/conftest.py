@@ -65,6 +65,11 @@ def judge_scores(world, scores):
     world["judge"].scores = [float(s) for s in scores.split(" then ")]
 
 
+@given(parsers.parse("the {role} ends its step without a handoff"))
+def no_handoff(world, role):
+    world["backend"].incomplete_on = role
+
+
 @given(parsers.parse("the backend crashes when the {role} starts"))
 def crashes(world, role):
     world["backend"].crash_on = role

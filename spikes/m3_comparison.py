@@ -26,11 +26,12 @@ LOGS = Path(__file__).parent / "out" / "m3"
 TIMEOUT_S = 45 * 60
 
 
-def jobs() -> list[tuple[str, dict, bool]]:
+def jobs(series: str = "both", on_base: int = 101, off_base: int = 201) -> list[tuple[str, dict, bool]]:
     tickets = yaml.safe_load((Path(__file__).parent / "m3_tickets.yaml").read_text())
     out = []
     for i, ticket in enumerate(tickets):
-        pair = [(f"CODEC-{101 + i}", ticket, True), (f"CODEC-{201 + i}", ticket, False)]
+        pair = [(f"CODEC-{on_base + i}", ticket, True), (f"CODEC-{off_base + i}", ticket, False)]
+        pair = [j for j in pair if series == "both" or (series == "on") == j[2]]
         out += pair if i % 2 == 0 else pair[::-1]  # alternate which setting goes first
     return out
 
@@ -79,8 +80,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--only", default="")
+    parser.add_argument("--series", choices=["both", "on", "off"], default="both", help="run Jev on, off, or both")
+    parser.add_argument("--on-base", type=int, default=101, help="first ticket number for Jev-on missions")
+    parser.add_argument("--off-base", type=int, default=201, help="first ticket number for Jev-off missions")
     args = parser.parse_args()
-    todo = jobs()
+    todo = jobs(args.series, args.on_base, args.off_base)
     if args.only:
         wanted = set(args.only.split(","))
         todo = [j for j in todo if j[0] in wanted]

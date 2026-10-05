@@ -12,7 +12,7 @@ from typesafe_sdk import Noul, TypeSafeError
 
 from codec_swarm.domain import Handoff, Mission, ScenarioResult, Verdict
 from codec_swarm.harness.config import Check
-from codec_swarm.plugins.checks import ChecksOnlyJudge, run_check
+from codec_swarm.plugins.checks import ChecksOnlyJudge, junit_results, run_check
 from codec_swarm.plugins.jev.client import SystemOne
 
 MAX_DIFF_CHARS = 12_000  # Jev sees a truncated diff and diff stats, never whole files or secrets
@@ -58,12 +58,14 @@ class JevJudge:
         failed = tuple(check.id for check, ok, _ in results if not ok)
         scenarios = load_scenarios(lane.worktree)
         stat, diff = _diff(lane.worktree, lane.base)
+        tests = [t for check in lane.checks for t in junit_results(lane.worktree, check)]
         state = {
             "ticket": {"id": mission.ticket, "title": mission.title, "description": mission.description},
             "checks": [{"id": c.id, "passed": ok, "output_tail": tail} for c, ok, tail in results],
             "diff_stat": stat,
             "diff": diff,
             "scenarios": [text for _, text in scenarios],
+            "tests": tests,  # per-test results from JUnit reports, when the repo's checks write them
         }
         questions = {"done": DONE} | {
             f"scenario_{i}": Noul(instructions={"question": "Does the change meet this scenario?", "scenario": text})
@@ -74,11 +76,13 @@ class JevJudge:
         except TypeSafeError:
             fallback = await ChecksOnlyJudge(lambda m: (lane.worktree, lane.checks)).evaluate(mission, handoffs)
             return fallback.model_copy(update={"source": "checks-only (jev unavailable)"})
+        per_scenario = tuple(ScenarioResult(name=name, probability=answers[f"scenario_{i}"].noul) for i, (name, _) in enumerate(scenarios))
+        done = answers["done"].noul
+        # The lane is as done as its weakest scenario: that is what a send-back can name and a coder can fix.
+        # Jev's whole-lane answer ran 0.1-0.2 below its own scenario scores in M3, so it is reported, not used.
+        score = min((s.probability for s in per_scenario), default=done)
         notes = [f"{c.id}: {'pass' if ok else 'FAIL'}" + ("" if ok else f"\n{tail}") for c, ok, tail in results]
-        return Verdict(
-            score=answers["done"].noul,
-            source="jev",
-            rationale="\n".join(notes) or "no checks configured",
-            failed_checks=failed,
-            scenarios=tuple(ScenarioResult(name=name, probability=answers[f"scenario_{i}"].noul) for i, (name, _) in enumerate(scenarios)),
-        )
+        weakest = sorted(per_scenario, key=lambda s: s.probability)[:3]
+        notes += [f"scenario {s.probability:.2f}: {s.name}" for s in weakest]
+        notes.append(f"lane done (Jev, not used for the band): {done:.2f}")
+        return Verdict(score=score, source="jev", rationale="\n".join(notes), failed_checks=failed, scenarios=per_scenario)

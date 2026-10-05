@@ -138,7 +138,9 @@ def build_graph(
     }
 
     def after_role(state: MissionState) -> str:
-        return "handoff_gate" if _mission(state).autonomy is Autonomy.MANUAL else state["next"]
+        incomplete = bool(state.get("handoffs")) and state["handoffs"][-1].get("incomplete")
+        # A step without a real handoff always waits for a human, whatever the autonomy.
+        return "handoff_gate" if incomplete or _mission(state).autonomy is Autonomy.MANUAL else state["next"]
 
     def follow_next(state: MissionState) -> str:
         return state["next"]

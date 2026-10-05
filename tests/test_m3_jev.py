@@ -33,9 +33,12 @@ class FakeJev:
         self.next_role = ("reviewer", 0.9)
         self.safe = 0.5
         self.done = 0.5
+        self.scenarios: dict[str, float] = {}  # scenario name -> probability; others get 0.9
+        self.states: list = []
 
     async def __call__(self, state, questions):
         self.calls += 1
+        self.states.append(state)
         if self.down:
             raise TypeSafeError("Jev is unavailable")
         answers = {}
@@ -50,7 +53,9 @@ class FakeJev:
             elif name == "done":
                 answers[name] = {"type": "noul", "noul": self.done}
             else:  # scenario_i
-                answers[name] = {"type": "noul", "noul": 0.9}
+                text = question.instructions["scenario"]
+                p = next((v for k, v in self.scenarios.items() if f"Scenario: {k}\n" in text + "\n"), 0.9)
+                answers[name] = {"type": "noul", "noul": p}
         return SystemOneResponse.model_validate({"model": "jev-1.13.0", "usage": {"input_tokens": 1, "output_tokens": 1}, "answers": answers})
 
     @staticmethod
@@ -209,6 +214,36 @@ def jev_judge(world, state):
     checks = (Check(id="unit", run=f"python3 -c 'raise SystemExit({code})'"),)
     lane = LaneUnderJudgement(worktree=world["tmp"], base="develop", checks=checks)
     world["judge"] = JevJudge(world["jev"], lambda m: lane)
+
+
+@given(parsers.parse('Jev scores scenario "{name}" at {p:f}'))
+def scenario_score(world, name, p):
+    world["jev"].scenarios[name] = p
+
+
+@given(parsers.parse("a Jev judge whose passing check writes a JUnit report of {total:d} tests, {failing:d} failing"))
+def judge_with_junit(world, total, failing):
+    from codec_swarm.harness.config import Report
+
+    cases = "".join(
+        f'<testcase classname="tests.test_cents" name="test_{i}">' + ("<failure message='boom'/>" if i < failing else "") + "</testcase>"
+        for i in range(total)
+    )
+    (world["tmp"] / "reports").mkdir()
+    (world["tmp"] / "reports" / "junit.xml").write_text(f'<testsuites><testsuite name="pytest">{cases}</testsuite></testsuites>')
+    checks = (Check(id="unit", run="python3 -c 'raise SystemExit(0)'", report=Report(kind="junit", path="reports/junit.xml")),)
+    lane = LaneUnderJudgement(worktree=world["tmp"], base="develop", checks=checks)
+    world["judge"] = JevJudge(world["jev"], lambda m: lane)
+
+
+@then(parsers.parse("Jev was shown {count:d} test results"))
+def shown_tests(world, count):
+    assert len(world["jev"].states[-1]["tests"]) == count
+
+
+@then(parsers.parse('the verdict rationale names "{name}"'))
+def rationale_names(world, name):
+    assert name in world["verdict"].rationale
 
 
 @given(parsers.parse("Jev says the lane is done with probability {p:f}"))

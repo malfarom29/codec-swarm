@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
 
@@ -22,6 +23,28 @@ def run_check(check: Check, worktree: Path) -> tuple[bool, str]:
         return False, f"timed out after {CHECK_TIMEOUT_S}s"
     output = (proc.stdout + proc.stderr).strip().splitlines()
     return proc.returncode == 0, "\n".join(output[-TAIL_LINES:])
+
+
+MAX_TESTS = 300
+
+
+def junit_results(worktree: Path, check: Check) -> list[dict[str, object]]:
+    """Per-test results from a check's JUnit report, if it has one: the judge's executable evidence."""
+    if check.report is None or check.report.kind != "junit":
+        return []
+    path = worktree / check.report.path
+    if not path.exists():
+        return []
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError:
+        return []
+    results = []
+    for case in root.iter("testcase"):
+        failed = any(child.tag in ("failure", "error") for child in case)
+        skipped = any(child.tag == "skipped" for child in case)
+        results.append({"test": f"{case.get('classname', '')}::{case.get('name', '')}", "passed": not failed and not skipped, "skipped": skipped})
+    return results[:MAX_TESTS]
 
 
 class ChecksOnlyJudge:

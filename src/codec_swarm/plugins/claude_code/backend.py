@@ -42,6 +42,7 @@ HANDOFF_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 MAX_EVENT_TEXT = 2000
+HANDOFF_RETRY_PROMPT = "You ended your step without your structured handoff. Reply now with only your structured handoff for this step."
 
 
 class HandoffMissing(RuntimeError):
@@ -122,34 +123,47 @@ class ClaudeCodeBackend:
         pending: list[AgentEvent] = []
         result: ResultMessage | None = None
         model = spec.model if spec.model_forced else (request.model or spec.model)
+        last_text = ""
+        turns, cost = 0, 0.0
         async with ClaudeSDKClient(options=self._options(spec, request.mission, model, pending)) as client:
-            await client.query(task_prompt(request))
-            async for message in client.receive_response():
-                while pending:
-                    yield pending.pop(0)
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock) and block.text.strip():
-                            yield AgentEvent(kind="agent.message", role=spec.role, payload={"text": _clip(block.text)})
-                        elif isinstance(block, ToolUseBlock):
-                            yield AgentEvent(kind="agent.tool", role=spec.role, payload=_clip({"tool": block.name, "input": block.input}))
-                elif isinstance(message, ResultMessage):
-                    result = message
+            for attempt, prompt in enumerate((task_prompt(request), HANDOFF_RETRY_PROMPT)):
+                if attempt and isinstance(result.structured_output if result else None, dict):
+                    break
+                if attempt:
+                    yield AgentEvent(kind="handoff.retry", role=spec.role, payload={"subtype": result.subtype if result else None})
+                await client.query(prompt)
+                async for message in client.receive_response():
+                    while pending:
+                        yield pending.pop(0)
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock) and block.text.strip():
+                                last_text = block.text
+                                yield AgentEvent(kind="agent.message", role=spec.role, payload={"text": _clip(block.text)})
+                            elif isinstance(block, ToolUseBlock):
+                                yield AgentEvent(kind="agent.tool", role=spec.role, payload=_clip({"tool": block.name, "input": block.input}))
+                    elif isinstance(message, ResultMessage):
+                        result = message
+                        turns, cost = turns + message.num_turns, cost + (message.total_cost_usd or 0.0)
         while pending:
             yield pending.pop(0)
 
         if result is None:
             raise HandoffMissing(f"{spec.role} step ended without a result")
-        self._sessions.record(
-            request.mission.ticket, request.mission.repo, spec.role, result.session_id, model,
-            result.num_turns, result.total_cost_usd or 0.0,
-        )
+        self._sessions.record(request.mission.ticket, request.mission.repo, spec.role, result.session_id, model, turns, cost)
         yield AgentEvent(
             kind="cost",
             role=spec.role,
-            payload={"session_id": result.session_id, "turns": result.num_turns, "cost_usd": result.total_cost_usd, "usage": result.usage},
+            payload={"session_id": result.session_id, "turns": turns, "cost_usd": cost, "usage": result.usage},
         )
-        if not isinstance(result.structured_output, dict):
-            raise HandoffMissing(f"{spec.role} ended without a structured handoff ({result.subtype})")
-        handoff = Handoff(from_role=spec.role, **{k: result.structured_output[k] for k in HANDOFF_SCHEMA["required"]})
+        if isinstance(result.structured_output, dict):
+            handoff = Handoff(from_role=spec.role, **{k: result.structured_output[k] for k in HANDOFF_SCHEMA["required"]})
+        else:
+            # Still no handoff after the retry: hand the lane to a human instead of crashing the mission.
+            handoff = Handoff(
+                from_role=spec.role,
+                summary=f"No structured handoff ({result.subtype}). Last message: {_clip(last_text)}",
+                questions=("The agent ended its step without a structured handoff. Check its work before the lane continues.",),
+                incomplete=True,
+            )
         yield AgentEvent(kind="handoff", role=spec.role, payload=handoff.model_dump())

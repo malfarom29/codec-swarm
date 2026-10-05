@@ -71,6 +71,14 @@ Feature: M1 engine
     Then the mission is PR ready
     And no role before the hardener ran twice
 
+  Scenario: A step that ends without a handoff waits at the handoff gate
+    Given a auto mission for CODEC-1423 on codec-payment
+    And the reviewer ends its step without a handoff
+    When the mission runs
+    Then it waits at the handoff gate after the reviewer
+    When I approve the gate
+    Then the mission is PR ready
+
   Scenario: Every step lands in the event log
     Given a gated mission for CODEC-1423 on codec-payment
     When the mission runs and I approve every gate

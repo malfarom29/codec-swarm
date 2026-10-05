@@ -71,6 +71,7 @@ class Handoff(BaseModel, frozen=True, str_strip_whitespace=True):
     summary: str
     send_back: bool = False
     commit_message: str = ""  # Conventional Commits message for the step's code changes; the orchestrator commits
+    incomplete: bool = False  # the step ended without a structured handoff, even after one retry
     files_touched: tuple[str, ...] = ()
     commit_sha: str | None = None
     questions: tuple[str, ...] = ()

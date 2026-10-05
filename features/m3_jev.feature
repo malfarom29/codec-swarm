@@ -77,12 +77,27 @@ Feature: M3 Jev plugins
     When the judge evaluates the lane
     Then the verdict score is <score> and the band is <band>
 
-    Examples:
+    Examples: a lane with no approved scenarios is scored as a whole
       | checks  | score | band    |
       | passing | 0.97  | approve |
       | failing | 0.99  | review  |
       | passing | 0.85  | review  |
       | passing | 0.60  | stop    |
+
+  Scenario: The lane's score is its weakest scenario, and a send-back names it
+    Given the Jev judge with the repo's checks passing
+    And the lane has 2 approved scenarios
+    And Jev says the lane is done with probability 0.97
+    And Jev scores scenario "Refund case 1" at 0.40
+    When the judge evaluates the lane
+    Then the verdict score is 0.40 and the band is stop
+    And the verdict rationale names "Refund case 1"
+
+  Scenario: The Jev judge sees which tests passed from the JUnit report
+    Given a Jev judge whose passing check writes a JUnit report of 3 tests, 1 failing
+    And the lane has 2 approved scenarios
+    When the judge evaluates the lane
+    Then Jev was shown 3 test results
 
   Scenario: The Jev judge checks each approved scenario
     Given the Jev judge with the repo's checks passing

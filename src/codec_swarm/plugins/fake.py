@@ -17,6 +17,7 @@ class BackendCrash(RuntimeError):
 class FakeBackend:
     send_back_once: set[str] = field(default_factory=set)  # roles whose first handoff sends the work back
     crash_on: str | None = None  # role whose step raises BackendCrash
+    incomplete_on: str | None = None  # role whose step ends without a structured handoff, even after the retry
     calls: list[str] = field(default_factory=list)
     requests: list[tuple[str, Handoff | None]] = field(default_factory=list)  # (role, incoming handoff)
     _sent_back: set[str] = field(default_factory=set)
@@ -32,6 +33,8 @@ class FakeBackend:
             self._sent_back.add(role)
         yield AgentEvent(kind="agent.message", role=role, payload={"text": f"{role} working on {request.mission.ticket}"})
         handoff = Handoff(from_role=role, summary=f"{role} {'sends back' if send_back else 'done'}", send_back=send_back)
+        if role == self.incomplete_on:
+            handoff = Handoff(from_role=role, summary=f"{role} ended without a structured handoff", incomplete=True)
         yield AgentEvent(kind="handoff", role=role, payload=handoff.model_dump())
 
 
