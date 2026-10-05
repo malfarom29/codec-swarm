@@ -140,9 +140,15 @@ def jev_on() -> bool:
 
 
 def report(args: argparse.Namespace) -> int:
-    events = EventLog(Path(args.root).expanduser() / "swarm.db")
-    tickets = args.tickets or sorted({e.mission for e in events.list() if e.kind == "mission.started"})
-    metrics = [mission_metrics(events.list(t)) for t in tickets]
+    metrics = []
+    for root in args.root or [str(DEFAULT_ROOT)]:
+        db = Path(root).expanduser() / "swarm.db"
+        if not db.exists():
+            continue
+        events = EventLog(db)
+        found = sorted({e.mission for e in events.list() if e.kind == "mission.started"})
+        metrics += [mission_metrics(events.list(t)) for t in found if not args.tickets or t in args.tickets]
+    metrics.sort(key=lambda m: m.ticket)
     print(f"{'ticket':<10} {'pack':<15} {'jev':<4} {'status':<9} {'min':>5} {'cost':>7} {'steps':>5} {'back':>4} {'judge':>5} {'wait':>5} {'asks':>4} {'jev tok':>8}")
     for m in metrics:
         to_pr = f"{m.minutes_to_pr:.1f}" if m.minutes_to_pr is not None else "-"
@@ -177,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--yes", action="store_true", help="approve every gate without asking (sandbox repos only)")
     r = sub.add_parser("report", help="metrics per mission and the pack / Jev comparison")
     r.add_argument("tickets", nargs="*")
-    r.add_argument("--root", default=str(DEFAULT_ROOT))
+    r.add_argument("--root", action="append", help="workspace root to read; repeat to combine several (default ~/.codec-swarm)")
     args = parser.parse_args(argv)
     if args.command == "mission":
         return anyio.run(run_mission, args)
