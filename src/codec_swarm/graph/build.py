@@ -5,6 +5,7 @@ M1 runs one lane; multi-lane missions with dependency order come in M3.
 
 from __future__ import annotations
 
+import inspect
 import operator
 from typing import Annotated, Any, Callable, TypedDict
 
@@ -33,6 +34,10 @@ def _mission(state: MissionState) -> Mission:
     return Mission.model_validate(state["mission"])
 
 
+async def _resolved(value: Any) -> Any:
+    return await value if inspect.isawaitable(value) else value
+
+
 def build_graph(
     pack: Pack,
     backend: AgentBackend,
@@ -48,15 +53,19 @@ def build_graph(
         async def run(state: MissionState) -> MissionState:
             mission = _mission(state)
             incoming = Handoff.model_validate(state["handoffs"][-1]) if state.get("handoffs") else None
+            pick = await _resolved(router.pick_model(pack, mission, role, incoming))
+            if pick.next:
+                events.append(mission.ticket, "decision", {"slot": "model", **pick.model_dump()}, role=role)
             handoff: Handoff | None = None
-            async for event in backend.run_step(StepRequest(mission=mission, role=role, incoming=incoming)):
+            request = StepRequest(mission=mission, role=role, incoming=incoming, model=pick.next or None)
+            async for event in backend.run_step(request):
                 events.append(mission.ticket, event.kind, event.payload, role=role)
                 if event.kind == "handoff":
                     handoff = Handoff.model_validate(event.payload)
             if handoff is None:
                 raise RuntimeError(f"{role} ended its step without a handoff")
-            decision = router.next_role(pack, role, handoff)
-            events.append(mission.ticket, "decision", decision.model_dump(), role=role)
+            decision = await _resolved(router.next_role(pack, role, handoff))
+            events.append(mission.ticket, "decision", {"slot": "next_role", **decision.model_dump()}, role=role)
             if recorder is not None:
                 step = len(state.get("handoffs", [])) + 1
                 sha = recorder.record(mission, step, handoff, decision.next)

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from codec_swarm.domain import Autonomy
 from codec_swarm.harness.config import OUTPUT_FILTERS, READ_ONLY_COMMANDS
+from codec_swarm.plugins.commands import resolve_command
 
 
 class Action(StrEnum):
@@ -22,6 +23,7 @@ class Action(StrEnum):
 
 class GateContext(BaseModel, frozen=True):
     ticket: str
+    repo: str = ""
     role: str
     worktree: Path
     autonomy: Autonomy
@@ -106,6 +108,14 @@ class AllowlistGate:
         hard = hard_rules(tool, tool_input, ctx)
         if hard is not None:
             return hard
+        if tool == "Bash":
+            # A harmless name can hide a dangerous script, so the hard rules also see what it really runs.
+            command = str(tool_input.get("command", ""))
+            resolved = resolve_command(ctx.worktree, command)
+            if resolved != command:
+                hidden = hard_rules("Bash", {"command": resolved}, ctx)
+                if hidden is not None and hidden.action is not Action.ALLOW:
+                    return hidden.model_copy(update={"reason": f"{hidden.reason} (inside: {resolved})"})
         if tool in HARMLESS_TOOLS:
             return GateDecision(action=Action.ALLOW, reason=f"{tool} has no side effects outside the session", source="rule")
         if tool.startswith("mcp__"):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -21,7 +22,7 @@ from claude_agent_sdk import (
 from codec_swarm.domain import Handoff, Mission
 from codec_swarm.harness import SessionSpec, resolve_env_refs
 from codec_swarm.plugins.api import AgentEvent, StepRequest
-from codec_swarm.plugins.gate import Action, AllowlistGate, GateContext, hard_rules
+from codec_swarm.plugins.gate import Action, GateContext, hard_rules
 from codec_swarm.store import SessionStore
 
 # The step's final answer must match this schema, so the handoff never depends on parsing prose.
@@ -72,7 +73,7 @@ class ClaudeCodeBackend:
     def __init__(
         self,
         session_for: Callable[[Mission, str], SessionSpec],
-        gate: AllowlistGate,
+        gate: Any,  # AllowlistGate or JevCommandGate; decide() may be sync or async
         sessions: SessionStore,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -81,11 +82,13 @@ class ClaudeCodeBackend:
         self._sessions = sessions
         self._env = env
 
-    def _options(self, spec: SessionSpec, mission: Mission, pending: list[AgentEvent]) -> ClaudeAgentOptions:
-        ctx = GateContext(ticket=mission.ticket, role=spec.role, worktree=spec.cwd, autonomy=mission.autonomy)
+    def _options(self, spec: SessionSpec, mission: Mission, model: str, pending: list[AgentEvent]) -> ClaudeAgentOptions:
+        ctx = GateContext(ticket=mission.ticket, repo=mission.repo, role=spec.role, worktree=spec.cwd, autonomy=mission.autonomy)
 
         async def can_use_tool(name: str, tool_input: dict[str, Any], _: ToolPermissionContext):
             decision = self._gate.decide(name, tool_input, ctx)
+            if inspect.isawaitable(decision):
+                decision = await decision
             pending.append(AgentEvent(kind="gate.decision", role=spec.role, payload=_clip({"tool": name, "input": tool_input, **decision.model_dump()})))
             if decision.action is Action.ALLOW:
                 return PermissionResultAllow()
@@ -102,7 +105,7 @@ class ClaudeCodeBackend:
         return ClaudeAgentOptions(
             cwd=str(spec.cwd),
             resume=self._sessions.get(mission.ticket, mission.repo, spec.role),
-            model=spec.model,
+            model=model,
             system_prompt=spec.system_prompt,
             mcp_servers=resolve_env_refs(spec.mcp_servers, self._env),
             skills=list(spec.skills),
@@ -118,7 +121,8 @@ class ClaudeCodeBackend:
         spec = self._session_for(request.mission, request.role)
         pending: list[AgentEvent] = []
         result: ResultMessage | None = None
-        async with ClaudeSDKClient(options=self._options(spec, request.mission, pending)) as client:
+        model = spec.model if spec.model_forced else (request.model or spec.model)
+        async with ClaudeSDKClient(options=self._options(spec, request.mission, model, pending)) as client:
             await client.query(task_prompt(request))
             async for message in client.receive_response():
                 while pending:
@@ -137,7 +141,7 @@ class ClaudeCodeBackend:
         if result is None:
             raise HandoffMissing(f"{spec.role} step ended without a result")
         self._sessions.record(
-            request.mission.ticket, request.mission.repo, spec.role, result.session_id, spec.model,
+            request.mission.ticket, request.mission.repo, spec.role, result.session_id, model,
             result.num_turns, result.total_cost_usd or 0.0,
         )
         yield AgentEvent(

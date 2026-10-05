@@ -8,6 +8,7 @@ from codec_swarm.domain.models import (
     JudgeBands,
     Mission,
     Pack,
+    ScenarioResult,
     Verdict,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "JudgeBands",
     "Mission",
     "Pack",
+    "ScenarioResult",
     "Verdict",
 ]

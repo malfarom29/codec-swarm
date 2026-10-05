@@ -14,6 +14,7 @@ class StepRequest(BaseModel, frozen=True):
     mission: Mission
     role: str
     incoming: Handoff | None = None
+    model: str | None = None  # the router's pick; None keeps the role's harness default
 
 
 class AgentEvent(BaseModel, frozen=True):
@@ -29,6 +30,10 @@ class AgentBackend(Protocol):
 
 
 class Router(Protocol):
+    """Both calls may be sync or async; the graph awaits whichever it gets."""
+
+    def pick_model(self, pack: Pack, mission: Mission, role: str, incoming: Handoff | None) -> Decision: ...
+
     def next_role(self, pack: Pack, role: str, handoff: Handoff) -> Decision: ...
 
 

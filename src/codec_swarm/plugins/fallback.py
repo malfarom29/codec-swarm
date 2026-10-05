@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from codec_swarm.domain import Decision, Handoff, Pack
+from codec_swarm.domain import Decision, Handoff, Mission, Pack
 
 
 class PackOrderRouter:
     """Forward in pack order; a send-back goes one step only, like SwarmForge's back-one."""
+
+    def pick_model(self, pack: Pack, mission: Mission, role: str, incoming: Handoff | None) -> Decision:
+        return Decision(next="", source="rule", rationale="fixed model per role from the harness")
 
     def next_role(self, pack: Pack, role: str, handoff: Handoff) -> Decision:
         if role in pack.planning_roles:

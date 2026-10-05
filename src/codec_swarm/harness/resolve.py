@@ -38,6 +38,7 @@ class SessionSpec(BaseModel, frozen=True):
     role: str
     cwd: Path
     model: str
+    model_forced: bool = False  # a local override beats the router's pick
     system_prompt: str
     mcp_servers: dict[str, dict[str, Any]]  # secrets still as ${env:NAME}
     skills: tuple[str, ...]
@@ -104,6 +105,7 @@ def resolve_session(
         role=role,
         cwd=worktree,
         model=overrides.model or spec.model,
+        model_forced=overrides.model is not None,
         system_prompt=LAYER_SEPARATOR.join(layer for layer in layers if layer),
         mcp_servers={name: pack.mcp_catalog[name] for name in mcp_names},
         skills=_unique(spec.skills, role_extras.extra_skills if role_extras else (), extras.skills),

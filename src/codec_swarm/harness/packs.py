@@ -13,8 +13,12 @@ from codec_swarm.domain import Pack
 PACKS_DIR = Path(__file__).resolve().parents[3] / "packs"
 
 
+MODEL_ORDER = ("haiku", "sonnet", "opus")
+
+
 class RoleSpec(BaseModel, frozen=True):
     model: str = "sonnet"
+    min_model: str = "haiku"  # floor for Jev's model routing
     mcp: tuple[str, ...] = ()
     skills: tuple[str, ...] = ()
     max_turns: int = 40

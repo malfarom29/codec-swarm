@@ -82,6 +82,12 @@ class Decision(BaseModel, frozen=True):
     next: str
     source: str
     rationale: str = ""
+    options: dict[str, float] = {}  # what was considered, with probabilities when the source has them
+
+
+class ScenarioResult(BaseModel, frozen=True):
+    name: str
+    probability: float | None = None  # Jev's "is this scenario met?"; None for judges without a calibrated score
 
 
 class Verdict(BaseModel, frozen=True):
@@ -89,6 +95,7 @@ class Verdict(BaseModel, frozen=True):
     source: str
     rationale: str = ""
     failed_checks: tuple[str, ...] = ()
+    scenarios: tuple[ScenarioResult, ...] = ()
 
 
 class JudgeBands(BaseModel, frozen=True):
