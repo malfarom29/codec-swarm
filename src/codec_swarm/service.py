@@ -32,6 +32,8 @@ from codec_swarm.store.settings import JiraSettings, Settings
 from codec_swarm.workspace import Workspace, WorkspaceRecorder
 from codec_swarm.workspace.github import GitHubPublisher
 from codec_swarm.workspace.lanes import DEFAULT_ROOT
+from codec_swarm.workspace.repos import RepoCatalog
+from codec_swarm.workspace.repos import repo_name as repo_name
 from codec_swarm.workspace.secrets import load_secrets, remove_secret, save_secret
 
 JIRA_TOKEN = "JIRA_API_TOKEN"
@@ -46,10 +48,6 @@ class MissionRequest(BaseModel, frozen=True):
     pack: str = "auto"  # auto (rule, or Jev when on) | solo | codec-standard | a pack path
     model: str | None = None  # a local override for every role
     no_jev: bool = False
-
-
-def repo_name(url: str) -> str:
-    return url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
 
 
 @dataclass
@@ -76,12 +74,13 @@ class MissionService:
         self.jira_transport: Any = None  # tests swap in an httpx.MockTransport
         load_secrets(self.root)
         self._workspace = Workspace(self.root)
+        self.repos = RepoCatalog(self.root, self._workspace, load_pack("codec-standard"))
         self._runtimes: dict[str, MissionRuntime] = {}
 
     async def build(self, request: MissionRequest, pack_name: str | None = None) -> MissionRuntime:
         standard = load_pack("codec-standard")
         repos = [(url, repo_name(url)) for url in request.repo_urls]
-        configs = {name: load_repo_config(self._workspace.clone(url, name), standard) for url, name in repos}
+        configs = {name: load_repo_config(self._workspace.clone(url, name), standard, local_dir=self.repos.local_dir) for url, name in repos}
         primary = configs[repos[0][1]]
         names = tuple(name for _, name in repos)
         mission = Mission(

@@ -403,3 +403,89 @@ def request_step(web, ticket, label):
 @then("it says I need to approve the spec")
 def needs_spec(web):
     assert "Waiting for you: approve the spec" in web["response"].text
+
+
+# --- repos ------------------------------------------------------------------------
+
+
+def _git(cwd, *args):
+    import subprocess
+
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+@given(parsers.parse('a local origin repo "{name}" with no swarm config'))
+def origin_repo(web, name):
+    origin = web["tmp"] / "origins" / name
+    origin.mkdir(parents=True)
+    (origin / "README.md").write_text("billing\n")
+    _git(origin, "init", "-q", "-b", "develop")
+    _git(origin, "add", ".")
+    _git(origin, "-c", "user.name=t", "-c", "user.email=t@l", "commit", "-qm", "init")
+    web["origin"], web["repo"] = origin, name
+
+
+@when("I add that repo on the Repos page")
+@given("I added that repo on the Repos page")
+def add_repo(web):
+    response = web["client"].post("/repos", data={"url": str(web["origin"])}, follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == f"/repos/{web['repo']}"
+
+
+@then(parsers.parse("the Repos page lists {name} as needing config"))
+def repos_list(web, name):
+    row = re.search(rf'data-repo="{name}">(.*?)</tr>', web["client"].get("/repos").text, re.S).group(1)
+    assert "needs config" in row
+
+
+@then(parsers.parse("the repo page for {name} offers a starter local config with stack {stack}"))
+def starter(web, name, stack):
+    page = web["client"].get(f"/repos/{name}").text
+    assert f"stack: {stack}" in page and "Kept on this machine only" in page
+
+
+@when(parsers.parse('I save {name}\'s local config with stack {stack}, allowlist "{command}" and domain "{domain}"'))
+def save_local(web, name, stack, command, domain):
+    config = f"stack: {stack}\nallowlist:\n  - {command}\n"
+    web["response"] = web["client"].post(f"/repos/{name}/config", data={"config": config, "domain": domain}, follow_redirects=False)
+    assert web["response"].status_code == 303
+
+
+@when(parsers.parse('I save {name}\'s local config as "{text}"'))
+def save_raw(web, name, text):
+    web["response"] = web["client"].post(f"/repos/{name}/config", data={"config": text, "domain": ""}, follow_redirects=False)
+
+
+@then(parsers.parse("the repo page for {name} says stack and allowlist come from local"))
+def from_local(web, name):
+    page = web["client"].get(f"/repos/{name}").text
+    for key in ("stack", "allowlist"):
+        row = re.search(rf'data-setting="{key}">(.*?)</tr>', page, re.S).group(1)
+        assert ">local<" in row
+
+
+@then(parsers.parse('{name}\'s config in effect allows "{command}" and has the domain "{domain}"'))
+def config_in_effect(web, name, command, domain):
+    config = web["service"].repos.detail(name).config
+    assert config.allowlist == (command,) and config.domain == domain
+
+
+@then(parsers.parse("the {name} clone has no .swarm files"))
+def clone_clean(web, name):
+    clone = web["service"].root / "repos" / name
+    assert not (clone / ".swarm").exists()
+    import subprocess
+
+    assert subprocess.run(["git", "status", "--porcelain"], cwd=clone, capture_output=True, text=True).stdout == ""
+
+
+@then(parsers.parse('the save is refused with "{text}"'))
+def refused(web, text):
+    import html
+
+    assert web["response"].status_code == 400 and text in html.unescape(web["response"].text)
+
+
+@then(parsers.parse("{name} has no local config file"))
+def no_local(web, name):
+    assert not (web["service"].root / "repos.d" / f"{name}.yaml").exists()

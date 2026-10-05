@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Repos · codec-swarm{% endblock %}
+{% block main %}
+<h1>Repos</h1>
+<p class="sub">Every repo a mission can work on. A repo's settings can come from its own <code>.swarm/config.yaml</code>, from a local file kept on this machine, or both (the local file wins).</p>
+{% if error %}<div class="panel note bad">{{ error }}</div>{% endif %}
+<form method="post" action="/repos" class="panel addrepo">
+  <label>Add a repo <input name="url" required placeholder="git@github.com:you/repo.git" aria-label="Repo URL"></label>
+  <button class="primary">Clone</button>
+  <span class="muted">Clones into ~/.codec-swarm/repos with your git credentials; nothing is written to the repo.</span>
+</form>
+<div class="panel tablewrap">
+<table>
+  <thead><tr><th>Repo</th><th>Stack</th><th>Config from</th><th>Missions</th><th>Origin</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr data-repo="{{ r.name }}">
+      <td><a href="/repos/{{ r.name }}" class="mono">{{ r.name }}</a></td>
+      <td class="mono">{{ r.stack or "—" }}</td>
+      <td>{% if r.local_file %}<span class="pill aqua">local</span> {% endif %}{% if r.repo_file %}<span class="pill dim">repo</span>{% endif %}{% if r.error %}<span class="pill red" title="{{ r.error }}">needs config</span>{% endif %}</td>
+      <td class="mono">{{ used.get(r.name, []) | length }}</td>
+      <td class="mono muted">{{ r.origin }}</td>
+    </tr>
+  {% else %}<tr><td colspan="5" class="empty">No repos yet. Add one above, or start a mission with its URL.</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

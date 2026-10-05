@@ -150,7 +150,7 @@ def scratch_file(world):
 
 @then("the handoff file flags verify_mission.py as a new file it did not list")
 def handoff_flags(world):
-    text = (world["lane"].path / ".swarm" / "handoffs" / "01-backend-coder-reviewer.md").read_text()
+    text = (_record(world) / "handoffs" / "01-backend-coder-reviewer.md").read_text()
     section = text[text.index("## New files not listed"):]
     assert "`verify_mission.py`" in section and "refunds.ts" not in section
 
@@ -176,16 +176,33 @@ def hands_off(world, message):
     world["sha"] = world["workspace"].record_handoff(world["lane"], 1, handoff, "reviewer")
 
 
-@then(".swarm/handoffs holds the handoff as markdown")
+def _record(world):
+    return world["workspace"].record_dir(world["lane"].ticket, world["lane"].repo)
+
+
+@given("the specifier wrote .swarm/spec/refunds.feature")
+def wrote_spec(world):
+    spec = world["lane"].path / ".swarm" / "spec"
+    spec.mkdir(parents=True)
+    (spec / "refunds.feature").write_text("Feature: Refunds\n\n  Scenario: Partial refund\n    Then it is refunded\n")
+
+
+@then("the mission record holds the handoff as markdown")
 def handoff_file(world):
-    text = (world["lane"].path / ".swarm" / "handoffs" / "01-backend-coder-reviewer.md").read_text()
+    text = (_record(world) / "handoffs" / "01-backend-coder-reviewer.md").read_text()
     assert text.startswith("# Handoff: backend-coder → reviewer")
     assert "`src/refunds.ts`" in text
 
 
-@then(parsers.parse('the lane\'s last commits are "{code}" then "{handoff}"'))
-def last_commits(world, code, handoff):
-    assert git(world["lane"].path, "log", "-2", "--format=%s").splitlines() == [handoff, code]
+@then(parsers.parse("the mission record keeps the file {path}"))
+def record_holds(world, path):
+    assert (_record(world) / path).is_file()
+
+
+@then(parsers.parse('the lane\'s last commit is "{code}" and the branch has no .swarm files'))
+def last_commit(world, code):
+    assert git(world["lane"].path, "log", "-1", "--format=%s") == code
+    assert not [p for p in git(world["lane"].path, "ls-files").splitlines() if p.startswith(".swarm/")]
     assert git(world["lane"].path, "status", "--porcelain") == ""
 
 

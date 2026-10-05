@@ -124,3 +124,27 @@ Feature: M4 dashboard
     When I open "/requests"
     Then CODEC-1712 is at the step "Your OK on the spec"
     And it says I need to approve the spec
+
+  Scenario: Adding a repo from the Repos page clones it and offers a starter local config
+    Given I am signed in
+    And a local origin repo "billing" with no swarm config
+    When I add that repo on the Repos page
+    Then the Repos page lists billing as needing config
+    And the repo page for billing offers a starter local config with stack python
+
+  Scenario: A local config configures a repo without committing anything to it
+    Given I am signed in
+    And a local origin repo "billing" with no swarm config
+    And I added that repo on the Repos page
+    When I save billing's local config with stack python, allowlist "uv run pytest" and domain "Amounts are integer cents."
+    Then the repo page for billing says stack and allowlist come from local
+    And billing's config in effect allows "uv run pytest" and has the domain "Amounts are integer cents."
+    And the billing clone has no .swarm files
+
+  Scenario: A local config that does not load is refused
+    Given I am signed in
+    And a local origin repo "billing" with no swarm config
+    And I added that repo on the Repos page
+    When I save billing's local config as "stack: cobol"
+    Then the save is refused with "Unknown stack 'cobol'"
+    And billing has no local config file

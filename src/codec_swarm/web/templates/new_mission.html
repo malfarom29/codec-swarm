@@ -12,7 +12,7 @@
   </div>
   <label>Title <input name="title" id="nm-title" required value="{{ prefill.title }}"></label>
   <label>What needs to change, and why <textarea name="description" id="nm-desc" rows="6" placeholder="Acceptance criteria, one per line">{{ prefill.description }}</textarea></label>
-  <label>Repos (one URL per line) <textarea name="repo_urls" id="nm-repos" rows="3" required></textarea></label>
+  <label>Repos (one URL per line) <textarea name="repo_urls" id="nm-repos" rows="3" required>{{ prefill.repo_urls }}</textarea></label>
   <div class="row2">
     <label>Pack
       <select name="pack" id="nm-pack"><option value="auto">Auto (rule, or Jev)</option><option value="codec-standard">Codec standard</option><option value="solo">Solo</option></select>

@@ -6,7 +6,7 @@ import subprocess
 from collections.abc import Callable, Sequence
 
 from codec_swarm.domain import Handoff, Mission
-from codec_swarm.workspace.lanes import Lane, _normalized, git
+from codec_swarm.workspace.lanes import Lane, _normalized, git, lane_spec_files
 
 Runner = Callable[[Sequence[str], str], str]  # (argv, cwd) -> stdout
 
@@ -38,7 +38,12 @@ def pr_body(mission: Mission, handoffs: list[Handoff], verdict: dict | None, lan
     unlisted = files_no_handoff_listed(lane, handoffs) if lane else []
     if unlisted:
         lines += ["", "## Files no handoff listed", "", "Check these before merging; they may be scratch files:", "", *[f"- `{p}`" for p in unlisted]]
-    lines += ["", "Handoff files under `.swarm/handoffs/` are still in this branch; whether to squash them out is an open question.", "", "Opened by codec-swarm."]
+    specs = sorted(lane_spec_files(lane.path, lane.base) or []) if lane else []
+    for spec in specs:
+        path = lane.path / spec
+        if path.is_file():
+            lines += ["", f"<details><summary>Approved spec: <code>{path.name}</code></summary>", "", "```gherkin", path.read_text().strip()[:20_000], "```", "", "</details>"]
+    lines += ["", f"The spec and handoffs stay out of this branch, in `~/.codec-swarm/missions/{mission.ticket}/{mission.repo}/`.", "", "Opened by codec-swarm."]
     return "\n".join(lines)
 
 

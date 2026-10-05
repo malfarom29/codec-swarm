@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ r.name }} · codec-swarm{% endblock %}
+{% block main %}
+<p><a href="/repos">← Repos</a></p>
+<div class="head">
+  <div><h1 class="mono">{{ r.name }}</h1><p class="sub">{{ r.origin or "not cloned yet" }}{% if used %} · {{ used | length }} mission{{ "s" if used | length != 1 }}{% endif %}</p></div>
+  {% if r.origin and r.config %}<a class="button primary" href="/missions/new?{{ {'repo_urls': r.origin} | urlencode }}">Start a mission here</a>{% endif %}
+</div>
+{% if error %}<div class="panel note bad" data-error>{{ error }}</div>{% elif saved %}<div class="panel note">Saved. New missions on {{ r.name }} use it.</div>{% elif r.error %}<div class="panel note bad">{{ r.error }}</div>{% endif %}
+<div class="repocols">
+  <section>
+    <h2>Settings in effect</h2>
+    {% if r.config %}
+    <div class="panel tablewrap">
+      <table data-sources>
+        <thead><tr><th>Setting</th><th>From</th></tr></thead>
+        <tbody>{% for key, src in r.sources.items() %}<tr data-setting="{{ key }}"><td class="mono">{{ key }}</td><td><span class="pill {{ {'local': 'aqua', 'repo': 'dim'}.get(src, '') }}">{{ src }}</span></td></tr>{% endfor %}
+        {% if r.config.domain %}<tr data-setting="domain"><td class="mono">domain</td><td><span class="pill aqua">local</span></td></tr>{% elif r.repo_domain %}<tr data-setting="domain"><td class="mono">domain</td><td><span class="pill dim">repo</span></td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+    <pre class="term short" data-effective>{{ config_yaml }}</pre>
+    {% else %}<p class="empty">No settings yet: add at least <code>stack:</code> ({{ stacks | join(", ") }}) in the local config.</p>{% endif %}
+    {% if r.repo_file %}<h2>The repo's .swarm/config.yaml</h2><pre class="term short">{{ r.repo_text }}</pre>{% endif %}
+  </section>
+  <section>
+    <h2>Local config</h2>
+    <form method="post" action="/repos/{{ r.name }}/config" class="stack">
+      <label>~/.codec-swarm/repos.d/{{ r.name }}.yaml {% if r.repo_file %}(only what differs from the repo's file){% endif %}
+        <textarea name="config" rows="14" spellcheck="false">{{ config_text }}</textarea></label>
+      <label>Domain notes: business rules every agent reads (constitution layer 2) {% if r.repo_domain %}· replaces the repo's .swarm/domain.md{% endif %}
+        <textarea name="domain" rows="6" placeholder="Amounts are integer cents. Refunds never exceed the captured amount.">{{ domain_text }}</textarea></label>
+      <p class="muted">Empty a box to remove that file. Stacks: {{ stacks | join(", ") }}. Specs and handoffs never go into the repo either: they're kept in ~/.codec-swarm/missions/&lt;ticket&gt;/{{ r.name }}/.</p>
+      <div><button class="primary">Save</button></div>
+    </form>
+  </section>
+</div>
+{% endblock %}

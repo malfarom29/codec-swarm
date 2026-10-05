@@ -1,8 +1,13 @@
-"""Repo clones and one git worktree per lane, under ~/.codec-swarm by default."""
+"""Repo clones and one git worktree per lane, under ~/.codec-swarm by default.
+
+Nothing under a worktree's .swarm/ is ever committed: specs, notes and handoffs are kept per mission in
+~/.codec-swarm/missions/<ticket>/<repo>/, so no branch (and no squash merge) carries them.
+"""
 
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -13,6 +18,8 @@ from codec_swarm.harness.config import BranchFlow
 
 DEFAULT_ROOT = Path.home() / ".codec-swarm"
 SWARM_IDENTITY = ["-c", "user.name=codec-swarm", "-c", "user.email=codec-swarm@localhost"]
+NOT_SWARM = ("--", ".", ":(exclude).swarm")  # pathspec: the whole worktree except .swarm/
+KEPT_IN_REPO = {"config.yaml", "domain.md"}  # a repo's own .swarm files, never copied into a mission record
 
 
 def slugify(title: str, limit: int = 60) -> str:
@@ -39,6 +46,11 @@ class Workspace:
     def __init__(self, root: Path = DEFAULT_ROOT) -> None:
         self.repos = root / "repos"
         self.worktrees = root / "worktrees"
+        self.missions = root / "missions"
+
+    def record_dir(self, ticket: str, repo: str) -> Path:
+        """Where a lane's spec, notes and handoffs are kept, outside its branch."""
+        return self.missions / ticket / repo
 
     def mission_dir(self, ticket: str) -> Path:
         """Holds every lane worktree of a mission; planning roles work here so they can write each repo's spec."""
@@ -52,6 +64,10 @@ class Workspace:
         else:
             self.repos.mkdir(parents=True, exist_ok=True)
             git(self.repos, "clone", "--quiet", origin, name)
+        exclude = path / ".git" / "info" / "exclude"  # shared by every worktree of this clone
+        if exclude.parent.is_dir() and "/.swarm/" not in (exclude.read_text() if exclude.exists() else ""):
+            with exclude.open("a") as f:
+                f.write("\n# codec-swarm: specs and handoffs stay out of branches\n/.swarm/\n")
         return path
 
     def prepare_lane(self, origin: str, repo: str, ticket: str, title: str, flow: BranchFlow) -> Lane:
@@ -64,22 +80,57 @@ class Workspace:
         return Lane(ticket=ticket, repo=repo, path=path, branch=branch, base=flow.base)
 
     def record_handoff(self, lane: Lane, step: int, handoff: Handoff, to_role: str) -> str:
-        """Commit the step's code changes with the agent's message, then the handoff file. Returns the handoff commit sha.
+        """Commit the step's code changes with the agent's message and keep the handoff in the mission record. Returns HEAD.
 
         Agents never commit themselves: git commit is not on any allowlist, and one commit per step keeps history readable.
         """
         unlisted = unlisted_new_files(lane.path, handoff.files_touched)
-        if git(lane.path, "status", "--porcelain"):
-            git(lane.path, "add", "--all")
+        if git(lane.path, "status", "--porcelain", *NOT_SWARM):
+            git(lane.path, "add", "--all")  # .swarm/ is ignored; a spec an older mission committed is unstaged below
+            subprocess.run(["git", "reset", "--quiet", "--", ".swarm"], cwd=lane.path, capture_output=True)
             message = handoff.commit_message or f"chore: {handoff.from_role} changes for {lane.ticket}"
             git(lane.path, *SWARM_IDENTITY, "commit", "--quiet", "-m", message)
-        folder = lane.path / ".swarm" / "handoffs"
+        record = self.record_dir(lane.ticket, lane.repo)
+        folder = record / "handoffs"
         folder.mkdir(parents=True, exist_ok=True)
-        name = f"{step:02d}-{handoff.from_role}-{to_role}.md"
-        (folder / name).write_text(render_handoff(lane.ticket, handoff, to_role, unlisted))
-        git(lane.path, "add", str(folder / name))
-        git(lane.path, *SWARM_IDENTITY, "commit", "--quiet", "-m", f"chore(swarm): {handoff.from_role} handoff")
+        (folder / f"{step:02d}-{handoff.from_role}-{to_role}.md").write_text(render_handoff(lane.ticket, handoff, to_role, unlisted))
+        self.archive(lane)
         return git(lane.path, "rev-parse", "HEAD")
+
+    def archive(self, lane: Lane) -> None:
+        """Copy what the agents wrote under .swarm/ (spec, design and plan notes) into the mission record."""
+        swarm = lane.path / ".swarm"
+        if not swarm.is_dir():
+            return
+        record = self.record_dir(lane.ticket, lane.repo)
+        for item in swarm.iterdir():
+            if item.name in KEPT_IN_REPO or item.name == "handoffs":
+                continue
+            target = record / item.name
+            if item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, target)
+
+
+def lane_spec_files(worktree: Path, base: str | None) -> set[str] | None:
+    """Spec files this lane wrote or changed; None when that can't be told (not a git worktree).
+
+    Specs are never committed now, so they show up as ignored or untracked files. Older missions committed theirs,
+    and a squash merge can carry an earlier mission's spec onto the base branch: those don't count.
+    """
+    if base is None:
+        return None
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", *args], cwd=worktree, capture_output=True, text=True)
+
+    committed = run("diff", "--name-only", f"origin/{base}...HEAD", "--", ".swarm/spec")
+    pending = run("status", "--porcelain", "--ignored", "--untracked-files=all", "--", ".swarm/spec")
+    if committed.returncode != 0 or pending.returncode != 0:
+        return None
+    return set(committed.stdout.split()) | {line[3:] for line in pending.stdout.splitlines()}
 
 
 def _normalized(worktree: Path, paths: tuple[str, ...] | list[str]) -> set[str]:

@@ -110,7 +110,7 @@ def resolve_session(
     if unknown:
         raise ValueError(f"MCP servers not in pack {pack.pack.name}'s catalog: {', '.join(unknown)}")
 
-    domain = (worktree / ".swarm" / "domain.md").read_text().strip() if (worktree / ".swarm" / "domain.md").exists() else None
+    domain = repo.domain or ((worktree / ".swarm" / "domain.md").read_text().strip() if (worktree / ".swarm" / "domain.md").exists() else None)
     layers = [
         pack.layer("constitution/01-core.md"),
         domain,

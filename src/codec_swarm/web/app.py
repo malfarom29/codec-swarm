@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import anyio
+import yaml
 from fastapi import BackgroundTasks, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -246,8 +247,8 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         return {"m": view, "activity": activity, "groups": groups, "stages": stages, "stage_index": stage_index}
 
     @app.get("/missions/new", response_class=HTMLResponse)
-    async def new_mission(request: Request, ticket: str = "", title: str = "", description: str = ""):
-        return render(request, "new_mission.html", prefill={"ticket": ticket, "title": title, "description": description})
+    async def new_mission(request: Request, ticket: str = "", title: str = "", description: str = "", repo_urls: str = ""):
+        return render(request, "new_mission.html", prefill={"ticket": ticket, "title": title, "description": description, "repo_urls": repo_urls})
 
     @app.get("/missions/{ticket}", response_class=HTMLResponse)
     async def mission(request: Request, ticket: str):
@@ -277,6 +278,43 @@ def create_app(service: MissionService, token: str) -> FastAPI:
     async def my_requests(request: Request):
         rows = [(m, request_step(m), open_questions(service.events.list(m.ticket))) for m in missions()]
         return render(request, "requests.html", rows=rows, steps=REQUEST_STEPS)
+
+    def repo_missions() -> dict[str, list[str]]:
+        used: dict[str, list[str]] = {}
+        for e in service.events.list():
+            if e.kind == "mission.started":
+                for repo in e.payload.get("repos") or []:
+                    used.setdefault(repo, []).append(e.mission)
+        return used
+
+    @app.get("/repos", response_class=HTMLResponse)
+    async def repos(request: Request, error: str = ""):
+        rows = [service.repos.summary(name) for name in service.repos.names()]
+        return render(request, "repos.html", rows=rows, used=repo_missions(), error=error)
+
+    @app.get("/repos/{name}", response_class=HTMLResponse)
+    async def repo_page(request: Request, name: str, saved: str = ""):
+        try:
+            detail = service.repos.detail(name)
+        except ValueError:
+            return PlainTextResponse(f"No repo {name}", status_code=404)
+        if not detail.cloned and not detail.local_file:
+            return PlainTextResponse(f"No repo {name}", status_code=404)
+        return render_repo(request, detail, saved=bool(saved))
+
+    def render_repo(
+        request: Request, detail: Any, error: str = "", config_text: str | None = None, domain_text: str | None = None,
+        status: int = 200, saved: bool = False,
+    ) -> HTMLResponse:
+        text = config_text if config_text is not None else (detail.local_text or ("" if detail.repo_file else service.repos.starter()))
+        response = render(
+            request, "repo.html", r=detail, error=error, config_text=text, saved=saved,
+            domain_text=domain_text if domain_text is not None else detail.domain_text,
+            stacks=service.repos.stacks(), used=repo_missions().get(detail.name, []),
+            config_yaml=yaml.safe_dump(detail.config.model_dump(mode="json", exclude={"domain"}), sort_keys=False) if detail.config else "",
+        )
+        response.status_code = status
+        return response
 
     @app.get("/jira", response_class=HTMLResponse)
     async def jira_page(request: Request, error: str = "", who: str = ""):
@@ -372,6 +410,22 @@ def create_app(service: MissionService, token: str) -> FastAPI:
     async def jira_disconnect():
         service.disconnect_jira()
         return RedirectResponse("/jira", status_code=303)
+
+    @app.post("/repos")
+    async def add_repo(url: str = Form(...)):
+        try:
+            name = await anyio.to_thread.run_sync(service.repos.add, url)
+        except (ValueError, RuntimeError) as error:
+            return RedirectResponse(f"/repos?{urlencode({'error': str(error)})}", status_code=303)
+        return RedirectResponse(f"/repos/{name}", status_code=303)
+
+    @app.post("/repos/{name}/config")
+    async def save_repo(request: Request, name: str, config: str = Form(""), domain: str = Form("")):
+        try:
+            service.repos.save(name, config, domain)
+        except ValueError as error:  # pydantic's ValidationError is a ValueError too
+            return render_repo(request, service.repos.detail(name), error=str(error), config_text=config, domain_text=domain, status=400)
+        return RedirectResponse(f"/repos/{name}?saved=1", status_code=303)
 
     @app.post("/missions/{ticket}/gates")
     async def answer_gate(background: BackgroundTasks, ticket: str, lane: str = Form(""), answer: str = Form(...), back: str = Form("")):

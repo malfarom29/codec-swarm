@@ -48,6 +48,10 @@ class PackDefinition(BaseModel, frozen=True):
             raise FileNotFoundError(f"pack {self.pack.name} has no prompt for role {role}")
         return prompt
 
+    def stacks(self) -> list[str]:
+        roots = [self.root / "stacks", *([self.base / "stacks"] if self.base else [])]
+        return sorted({p.stem for r in roots if r.is_dir() for p in r.glob("*.yaml")})
+
     def stack_defaults(self, stack: str) -> dict[str, Any]:
         path = self._find(f"stacks/{stack}.yaml")
         return yaml.safe_load(path.read_text()) if path else {}

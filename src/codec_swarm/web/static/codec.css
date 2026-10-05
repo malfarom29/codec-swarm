@@ -154,3 +154,9 @@ ol.plain li.done { color: var(--green); } ol.plain li.done::before { content: "â
 ol.plain li.now { color: var(--freq); font-weight: 600; } ol.plain li.now::before { content: "â—‰ "; }
 .ask { color: var(--amber); }
 .questions ul { margin: 4px 0 0; padding-left: 18px; }
+.addrepo { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.addrepo label { flex: 1 1 320px; }
+.repocols { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px; }
+.repocols h2:first-child { margin-top: 0; }
+.term.short { height: auto; max-height: 320px; }
+form.stack textarea { width: 100%; }

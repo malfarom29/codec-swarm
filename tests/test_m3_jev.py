@@ -251,6 +251,7 @@ def lane_with_old_spec(world):
     git(seed, "-c", "user.name=t", "-c", "user.email=t@l", "commit", "-qm", "old mission")
     git(world["tmp"], "clone", "-q", str(seed), "lane")
     world["lane_path"] = world["tmp"] / "lane"
+    (world["lane_path"] / ".git" / "info" / "exclude").write_text("/.swarm/\n")  # as Workspace.clone sets up
 
 
 @given(parsers.parse("the lane adds its own spec file with {count:d} scenarios"))

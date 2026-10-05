@@ -34,13 +34,15 @@ Feature: M2 real agents
     Then the handoff file flags verify_mission.py as a new file it did not list
     And the PR body flags verify_mission.py as a file no handoff listed
 
-  Scenario: The orchestrator commits the step's code, then the handoff
+  Scenario: The orchestrator commits the step's code and keeps the handoff and spec out of the branch
     Given a local origin repo with a develop branch
     And the workspace prepared lane CODEC-1423 "Partial refunds"
+    And the specifier wrote .swarm/spec/refunds.feature
     And the backend-coder changed src/refunds.ts
     When the backend-coder hands off to the reviewer with commit message "feat(refunds): add idempotency key"
-    Then .swarm/handoffs holds the handoff as markdown
-    And the lane's last commits are "feat(refunds): add idempotency key" then "chore(swarm): backend-coder handoff"
+    Then the mission record holds the handoff as markdown
+    And the mission record keeps the file spec/refunds.feature
+    And the lane's last commit is "feat(refunds): add idempotency key" and the branch has no .swarm files
 
   Scenario Outline: Without Jev, the command gate runs only the allowlist in Auto mode
     Given the command gate with the repo allowlist "npm run test, npm run lint"

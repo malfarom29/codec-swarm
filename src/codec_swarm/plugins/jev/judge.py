@@ -14,6 +14,7 @@ from codec_swarm.domain import Handoff, Mission, ScenarioResult, Verdict
 from codec_swarm.harness.config import Check
 from codec_swarm.plugins.checks import ChecksOnlyJudge, junit_results, run_check
 from codec_swarm.plugins.jev.client import SystemOne
+from codec_swarm.workspace.lanes import lane_spec_files
 
 MAX_DIFF_CHARS = 12_000  # Jev sees a truncated diff and diff stats, never whole files or secrets
 DONE = Noul(
@@ -27,21 +28,6 @@ class LaneUnderJudgement(BaseModel, frozen=True):
     checks: tuple[Check, ...]
 
 
-def _lane_spec_files(worktree: Path, base: str | None) -> set[str] | None:
-    """Spec files this lane added or changed against its base; None when that can't be told (not a git worktree)."""
-    if base is None:
-        return None
-
-    def git(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["git", *args], cwd=worktree, capture_output=True, text=True)
-
-    committed = git("diff", "--name-only", f"origin/{base}...HEAD", "--", ".swarm/spec")
-    pending = git("status", "--porcelain", "--untracked-files=all", "--", ".swarm/spec")
-    if committed.returncode != 0 or pending.returncode != 0:
-        return None
-    return set(committed.stdout.split()) | {line[3:] for line in pending.stdout.splitlines()}
-
-
 def load_scenarios(worktree: Path, base: str | None = None) -> list[tuple[str, str]]:
     """(name, text) for every scenario in this lane's approved spec under .swarm/spec/.
 
@@ -49,7 +35,7 @@ def load_scenarios(worktree: Path, base: str | None = None) -> list[tuple[str, s
     so only the ones this lane added or changed count.
     """
     scenarios: list[tuple[str, str]] = []
-    mine = _lane_spec_files(worktree, base)
+    mine = lane_spec_files(worktree, base)
     for feature in sorted((worktree / ".swarm" / "spec").glob("*.feature")):
         if mine is not None and feature.relative_to(worktree).as_posix() not in mine:
             continue
