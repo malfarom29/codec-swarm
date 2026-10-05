@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
@@ -17,12 +18,17 @@ from codec_swarm.graph.build import build_graph
 from codec_swarm.plugins.api import AgentBackend, EventSink, HandoffRecorder, Judge, Publisher, Router
 
 
+SQLITE_TIMEOUT_S = 30.0
+
+
 @dataclass(frozen=True)
 class RunResult:
-    status: str  # waiting | pr_ready
+    status: str  # waiting | pr_ready | planned | failed (stopped mid-step)
     gate: dict[str, Any] | None = None
     trail: list[str] = field(default_factory=list)
     pr_url: str | None = None
+    handoffs: list[dict[str, Any]] = field(default_factory=list)
+    mission: dict[str, Any] | None = None
 
 
 class MissionExists(RuntimeError):
@@ -42,53 +48,79 @@ class MissionRunner:
         events: EventSink,
         recorder: HandoffRecorder | None = None,
         publisher: Publisher | None = None,
+        part: str = "full",
     ):
-        self._db_path = db_path
+        # Checkpoints live in their own file. An async checkpoint transaction can stay open across an await,
+        # and a synchronous event-log write on the same file would then block the event loop it needs: a deadlock.
+        self._db_path = Path(db_path).with_suffix(".checkpoints.db")
         self._events = events
-        self._builder = build_graph(pack, backend, router, judge, events, recorder, publisher)
+        self._builder = build_graph(pack, backend, router, judge, events, recorder, publisher, part)
 
     @asynccontextmanager
     async def _graph(self) -> AsyncIterator[CompiledStateGraph]:
-        async with AsyncSqliteSaver.from_conn_string(str(self._db_path)) as saver:
-            yield self._builder.compile(checkpointer=saver)
+        # Lanes run side by side and checkpoint into the same file: WAL plus a generous busy timeout.
+        async with aiosqlite.connect(str(self._db_path), timeout=SQLITE_TIMEOUT_S) as conn:
+            await conn.execute("PRAGMA journal_mode=WAL")
+            yield self._builder.compile(checkpointer=AsyncSqliteSaver(conn))
 
     @staticmethod
-    def _config(ticket: str) -> dict[str, Any]:
-        return {"configurable": {"thread_id": ticket}}
+    def _config(thread: str) -> dict[str, Any]:
+        return {"configurable": {"thread_id": thread}}
 
-    async def start(self, mission: Mission, labels: dict[str, Any] | None = None) -> RunResult:
+    async def start(self, mission: Mission, labels: dict[str, Any] | None = None, thread: str | None = None) -> RunResult:
+        """Start a mission (or one lane of it) on its own thread; the thread defaults to the ticket."""
+        thread = thread or mission.ticket
         state = {"mission": mission.model_dump(mode="json"), "reworks": 0}
         async with self._graph() as graph:
-            if (await graph.aget_state(self._config(mission.ticket))).values:
-                raise MissionExists(f"{mission.ticket} already has a mission")
-            self._events.append(
-                mission.ticket, "mission.started", {"repo": mission.repo, "autonomy": mission.autonomy.value, **(labels or {})}
-            )
-            return await self._advance(graph, mission.ticket, state)
+            if (await graph.aget_state(self._config(thread))).values:
+                raise MissionExists(f"{thread} already has a mission")
+            if labels is not None:
+                self._events.append(
+                    mission.ticket, "mission.started", {"repo": mission.repo, "autonomy": mission.autonomy.value, **labels}
+                )
+            return await self._advance(graph, thread, state)
 
-    async def answer(self, ticket: str, answer: str) -> RunResult:
+    async def answer(self, thread: str, answer: str) -> RunResult:
         async with self._graph() as graph:
-            snapshot = await graph.aget_state(self._config(ticket))
+            snapshot = await graph.aget_state(self._config(thread))
             if not snapshot.interrupts:
-                raise RuntimeError(f"{ticket} is not waiting at a gate")
+                raise RuntimeError(f"{thread} is not waiting at a gate")
             gate = snapshot.interrupts[0].value
-            self._events.append(ticket, "gate.resolved", {"kind": gate["kind"], "answer": answer})
-            return await self._advance(graph, ticket, Command(resume=answer))
+            ticket = snapshot.values["mission"]["ticket"]
+            self._events.append(ticket, "gate.resolved", {"kind": gate["kind"], "lane": gate.get("lane"), "answer": answer})
+            return await self._advance(graph, thread, Command(resume=answer))
 
-    async def recover(self, ticket: str) -> RunResult:
+    async def recover(self, thread: str) -> RunResult:
         """Continue from the last checkpoint after the process died mid-step."""
-        self._events.append(ticket, "mission.recovered", {})
         async with self._graph() as graph:
-            return await self._advance(graph, ticket, None)
+            snapshot = await graph.aget_state(self._config(thread))
+            if snapshot.values:
+                self._events.append(snapshot.values["mission"]["ticket"], "mission.recovered", {"thread": thread})
+            return await self._advance(graph, thread, None)
 
-    async def _advance(self, graph: CompiledStateGraph, ticket: str, payload: Any) -> RunResult:
-        config = self._config(ticket)
+    async def status(self, thread: str) -> RunResult | None:
+        """Where a thread stands without running it; None if it never started."""
+        async with self._graph() as graph:
+            snapshot = await graph.aget_state(self._config(thread))
+            return self._result(snapshot) if snapshot.values else None
+
+    async def _advance(self, graph: CompiledStateGraph, thread: str, payload: Any) -> RunResult:
+        config = self._config(thread)
         # "sync" durability writes each step's checkpoint before the next step starts, so a crash loses at most one step.
         await graph.ainvoke(payload, config, durability="sync")
         snapshot = await graph.aget_state(config)
-        trail = list(snapshot.values.get("trail", []))
+        result = self._result(snapshot)
+        if result.gate is not None:
+            self._events.append(snapshot.values["mission"]["ticket"], "gate.opened", result.gate)
+        return result
+
+    @staticmethod
+    def _result(snapshot: Any) -> RunResult:
+        values = snapshot.values
+        common = {"trail": list(values.get("trail", [])), "handoffs": list(values.get("handoffs", [])), "mission": values.get("mission")}
         if snapshot.interrupts:
-            gate = snapshot.interrupts[0].value
-            self._events.append(ticket, "gate.opened", gate)
-            return RunResult(status="waiting", gate=gate, trail=trail)
-        return RunResult(status=snapshot.values.get("status", "unknown"), trail=trail, pr_url=snapshot.values.get("pr_url"))
+            gate = {**snapshot.interrupts[0].value, "lane": values["mission"]["repo"]}
+            return RunResult(status="waiting", gate=gate, **common)
+        if snapshot.next:
+            return RunResult(status="failed", **common)  # stopped mid-step: recover() continues it
+        return RunResult(status=values.get("status", "unknown"), pr_url=values.get("pr_url"), **common)

@@ -33,7 +33,7 @@ class Event(BaseModel, frozen=True):
 
 class EventLog:
     def __init__(self, path: Path | str) -> None:
-        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn = sqlite3.connect(path, check_same_thread=False, timeout=30.0)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(SCHEMA)
 

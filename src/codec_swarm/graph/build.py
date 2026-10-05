@@ -46,7 +46,9 @@ def build_graph(
     events: EventSink,
     recorder: HandoffRecorder | None = None,
     publisher: Publisher | None = None,
+    part: str = "full",  # full: one lane end to end | planning: up to the spec gate | lane: one repo's lane
 ) -> StateGraph:
+    with_planning, with_lane = part in ("full", "planning"), part in ("full", "lane")
     graph = StateGraph(MissionState)
 
     def role_node(role: str):
@@ -129,13 +131,19 @@ def build_graph(
         events.append(mission.ticket, "mission.done", {"status": "pr_ready", "pr_url": url})
         return {"status": "pr_ready", "pr_url": url}
 
+    def planned_node(state: MissionState) -> MissionState:
+        mission = _mission(state)
+        events.append(mission.ticket, "mission.planned", {"repos": list(mission.repos)})
+        return {"status": "planned"}
+
+    after_spec = pack.lane_roles[0] if with_lane else "planned"
     # Approving a review-band verdict is "approve and open PR", so it skips the PR gate.
-    gates = {
-        "spec_gate": gate_node(GateKind.SPEC, lambda s: pack.lane_roles[0], lambda s: pack.planning_roles[0]),
-        "handoff_gate": gate_node(GateKind.HANDOFF, lambda s: s["next"], lambda s: s["trail"][-1]),
-        "review_gate": gate_node(GateKind.REVIEW, lambda s: "done", lambda s: pack.rework_role),
-        "pr_gate": gate_node(GateKind.PR, lambda s: "done", lambda s: pack.rework_role),
-    }
+    gates = {"handoff_gate": gate_node(GateKind.HANDOFF, lambda s: s["next"], lambda s: s["trail"][-1])}
+    if with_planning:
+        gates["spec_gate"] = gate_node(GateKind.SPEC, lambda s: after_spec, lambda s: pack.planning_roles[0])
+    if with_lane:
+        gates["review_gate"] = gate_node(GateKind.REVIEW, lambda s: "done", lambda s: pack.rework_role)
+        gates["pr_gate"] = gate_node(GateKind.PR, lambda s: "done", lambda s: pack.rework_role)
 
     def after_role(state: MissionState) -> str:
         incomplete = bool(state.get("handoffs")) and state["handoffs"][-1].get("incomplete")
@@ -145,15 +153,21 @@ def build_graph(
     def follow_next(state: MissionState) -> str:
         return state["next"]
 
-    for role in (*pack.planning_roles, *pack.lane_roles):
+    roles = (*(pack.planning_roles if with_planning else ()), *(pack.lane_roles if with_lane else ()))
+    for role in roles:
         graph.add_node(role, role_node(role))
         graph.add_conditional_edges(role, after_role)
-    graph.add_node("judge", judge_node)
-    graph.add_conditional_edges("judge", follow_next)
     for name, node in gates.items():
         graph.add_node(name, node)
         graph.add_conditional_edges(name, follow_next)
-    graph.add_node("done", done_node)
-    graph.add_edge(START, (pack.planning_roles or pack.lane_roles)[0])
-    graph.add_edge("done", END)
+    if with_lane:
+        graph.add_node("judge", judge_node)
+        graph.add_conditional_edges("judge", follow_next)
+        graph.add_node("done", done_node)
+        graph.add_edge("done", END)
+    if part == "planning":
+        graph.add_node("planned", planned_node)
+        graph.add_edge("planned", END)
+    first = pack.planning_roles[0] if with_planning and pack.planning_roles else (pack.lane_roles[0] if with_lane else "planned")
+    graph.add_edge(START, first)
     return graph

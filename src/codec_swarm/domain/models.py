@@ -59,11 +59,19 @@ CODEC_STANDARD = Pack(
 
 class Mission(BaseModel, frozen=True):
     ticket: str
-    repo: str
+    repo: str  # this lane's repo; "" while planning a mission that spans several repos
+    repos: tuple[str, ...] = ()  # every repo in the mission, in the order given
     title: str = ""
     description: str = ""
     autonomy: Autonomy = Autonomy.GATED
     bands: JudgeBands | None = None
+
+
+class LaneOrder(BaseModel, frozen=True):
+    """One lane in the Architect's plan: which repos must reach the judge before it starts."""
+
+    repo: str
+    after: tuple[str, ...] = ()
 
 
 class Handoff(BaseModel, frozen=True, str_strip_whitespace=True):
@@ -72,6 +80,7 @@ class Handoff(BaseModel, frozen=True, str_strip_whitespace=True):
     send_back: bool = False
     commit_message: str = ""  # Conventional Commits message for the step's code changes; the orchestrator commits
     incomplete: bool = False  # the step ended without a structured handoff, even after one retry
+    lane_order: tuple[LaneOrder, ...] = ()  # only from the role that plans lanes
     files_touched: tuple[str, ...] = ()
     commit_sha: str | None = None
     questions: tuple[str, ...] = ()

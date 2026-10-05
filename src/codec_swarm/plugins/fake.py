@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
-from codec_swarm.domain import Handoff, Mission, Verdict
+from codec_swarm.domain import Handoff, LaneOrder, Mission, Verdict
 from codec_swarm.plugins.api import AgentEvent, StepRequest
 
 
@@ -18,6 +18,8 @@ class FakeBackend:
     send_back_once: set[str] = field(default_factory=set)  # roles whose first handoff sends the work back
     crash_on: str | None = None  # role whose step raises BackendCrash
     incomplete_on: str | None = None  # role whose step ends without a structured handoff, even after the retry
+    crash_in_repo: str | None = None  # limit crash_on to this repo's lane
+    lane_order: tuple[LaneOrder, ...] = ()  # what the architect plans
     calls: list[str] = field(default_factory=list)
     requests: list[tuple[str, Handoff | None]] = field(default_factory=list)  # (role, incoming handoff)
     _sent_back: set[str] = field(default_factory=set)
@@ -26,13 +28,15 @@ class FakeBackend:
         role = request.role
         self.calls.append(role)
         self.requests.append((role, request.incoming))
-        if role == self.crash_on:
+        if role == self.crash_on and (self.crash_in_repo is None or request.mission.repo == self.crash_in_repo):
             raise BackendCrash(f"backend crashed while {role} worked on {request.mission.ticket}")
         send_back = role in self.send_back_once and role not in self._sent_back
         if send_back:
             self._sent_back.add(role)
         yield AgentEvent(kind="agent.message", role=role, payload={"text": f"{role} working on {request.mission.ticket}"})
         handoff = Handoff(from_role=role, summary=f"{role} {'sends back' if send_back else 'done'}", send_back=send_back)
+        if role == "architect" and self.lane_order:
+            handoff = handoff.model_copy(update={"lane_order": self.lane_order})
         if role == self.incomplete_on:
             handoff = Handoff(from_role=role, summary=f"{role} ended without a structured handoff", incomplete=True)
         yield AgentEvent(kind="handoff", role=role, payload=handoff.model_dump())
