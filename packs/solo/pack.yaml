@@ -1,0 +1,13 @@
+# Solo pack: one coder and the Definition of Done. The single-agent baseline M3 compares against.
+# Constitution layers, stack defaults and the MCP catalog come from the pack it extends.
+name: solo
+extends: codec-standard
+planning_roles: []
+lane_roles: [coder]
+max_rework: 2
+roles:
+  coder:
+    model: sonnet
+    mcp: [context7]
+    skills: [tdd]
+    max_turns: 100

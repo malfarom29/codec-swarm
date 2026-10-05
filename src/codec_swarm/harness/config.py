@@ -61,6 +61,7 @@ class RepoConfig(BaseModel, frozen=True):
     version: int = 1
     stack: str
     pack: str = "codec-standard"
+    sensitive: bool = False  # payments or personal data: stricter thresholds, never the Solo pack
     branch_flow: BranchFlow = BranchFlow()
     checks: tuple[Check, ...] = ()
     judge: JudgeBands = JudgeBands()

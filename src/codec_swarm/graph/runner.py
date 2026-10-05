@@ -56,12 +56,14 @@ class MissionRunner:
     def _config(ticket: str) -> dict[str, Any]:
         return {"configurable": {"thread_id": ticket}}
 
-    async def start(self, mission: Mission) -> RunResult:
+    async def start(self, mission: Mission, labels: dict[str, Any] | None = None) -> RunResult:
         state = {"mission": mission.model_dump(mode="json"), "reworks": 0}
         async with self._graph() as graph:
             if (await graph.aget_state(self._config(mission.ticket))).values:
                 raise MissionExists(f"{mission.ticket} already has a mission")
-            self._events.append(mission.ticket, "mission.started", {"repo": mission.repo, "autonomy": mission.autonomy.value})
+            self._events.append(
+                mission.ticket, "mission.started", {"repo": mission.repo, "autonomy": mission.autonomy.value, **(labels or {})}
+            )
             return await self._advance(graph, mission.ticket, state)
 
     async def answer(self, ticket: str, answer: str) -> RunResult:

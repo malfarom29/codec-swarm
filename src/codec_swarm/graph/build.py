@@ -152,6 +152,6 @@ def build_graph(
         graph.add_node(name, node)
         graph.add_conditional_edges(name, follow_next)
     graph.add_node("done", done_node)
-    graph.add_edge(START, pack.planning_roles[0])
+    graph.add_edge(START, (pack.planning_roles or pack.lane_roles)[0])
     graph.add_edge("done", END)
     return graph

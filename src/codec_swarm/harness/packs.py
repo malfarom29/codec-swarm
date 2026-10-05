@@ -29,10 +29,17 @@ class PackDefinition(BaseModel, frozen=True):
     pack: Pack
     roles: dict[str, RoleSpec]
     mcp_catalog: dict[str, dict[str, Any]]
+    base: Path | None = None  # the pack this one extends; its files fill in what this pack lacks
+
+    def _find(self, relative: str) -> Path | None:
+        for root in (self.root, self.base):
+            if root is not None and (root / relative).exists():
+                return root / relative
+        return None
 
     def layer(self, relative: str) -> str | None:
-        path = self.root / relative
-        return path.read_text().strip() if path.exists() else None
+        path = self._find(relative)
+        return path.read_text().strip() if path else None
 
     def role_prompt(self, role: str) -> str:
         prompt = self.layer(f"roles/{role}.md")
@@ -41,15 +48,19 @@ class PackDefinition(BaseModel, frozen=True):
         return prompt
 
     def stack_defaults(self, stack: str) -> dict[str, Any]:
-        path = self.root / "stacks" / f"{stack}.yaml"
-        return yaml.safe_load(path.read_text()) if path.exists() else {}
+        path = self._find(f"stacks/{stack}.yaml")
+        return yaml.safe_load(path.read_text()) if path else {}
+
+
+def _pack_root(name_or_path: str | Path) -> Path:
+    root = Path(name_or_path)
+    return root if root.is_dir() else PACKS_DIR / str(name_or_path)
 
 
 def load_pack(name_or_path: str | Path) -> PackDefinition:
-    root = Path(name_or_path)
-    if not root.is_dir():
-        root = PACKS_DIR / str(name_or_path)
+    root = _pack_root(name_or_path)
     raw = yaml.safe_load((root / "pack.yaml").read_text())
+    base = load_pack(raw["extends"]) if raw.get("extends") else None
     pack = Pack(
         name=raw["name"],
         planning_roles=tuple(raw["planning_roles"]),
@@ -59,4 +70,5 @@ def load_pack(name_or_path: str | Path) -> PackDefinition:
     roles = {name: RoleSpec(**spec) for name, spec in raw.get("roles", {}).items()}
     for role in (*pack.planning_roles, *pack.lane_roles):
         roles.setdefault(role, RoleSpec())
-    return PackDefinition(root=root, pack=pack, roles=roles, mcp_catalog=raw.get("mcp_catalog", {}))
+    catalog = {**(base.mcp_catalog if base else {}), **raw.get("mcp_catalog", {})}
+    return PackDefinition(root=root, pack=pack, roles=roles, mcp_catalog=catalog, base=base.root if base else None)
