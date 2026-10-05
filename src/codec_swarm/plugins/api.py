@@ -42,6 +42,12 @@ class HandoffRecorder(Protocol):
     def record(self, mission: Mission, step: int, handoff: Handoff, to_role: str) -> str | None: ...
 
 
+class Publisher(Protocol):
+    """Pushes an approved lane and opens its PR; returns the PR URL. Must be safe to call twice."""
+
+    def publish(self, mission: Mission, handoffs: list[Handoff], verdict: dict[str, Any] | None) -> str: ...
+
+
 class EventSink(Protocol):
     """Where the engine writes its append-only event log."""
 

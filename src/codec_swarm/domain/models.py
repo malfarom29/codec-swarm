@@ -61,6 +61,7 @@ class Mission(BaseModel, frozen=True):
     ticket: str
     repo: str
     title: str = ""
+    description: str = ""
     autonomy: Autonomy = Autonomy.GATED
     bands: JudgeBands | None = None
 
@@ -102,7 +103,8 @@ class JudgeBands(BaseModel, frozen=True):
 
     def classify(self, verdict: Verdict) -> Band:
         if verdict.score is None:
-            return Band.REVIEW
+            # Without a calibrated score nothing approves itself: a failed check goes back, a clean run goes to a human.
+            return Band.STOP if verdict.failed_checks else Band.REVIEW
         if verdict.score >= self.approve_at:
             # A failed hard check blocks auto-approval regardless of the score.
             return Band.REVIEW if verdict.failed_checks else Band.APPROVE

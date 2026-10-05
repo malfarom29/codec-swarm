@@ -15,8 +15,12 @@ class TestJudgeBands:
     def test_score_lands_in_its_band(self, score, band):
         assert self.bands.classify(Verdict(score=score, source="test")) is band
 
-    def test_no_score_always_needs_a_human(self):
+    def test_no_score_with_passing_checks_always_needs_a_human(self):
         assert self.bands.classify(Verdict(score=None, source="checks-only")) is Band.REVIEW
+
+    def test_no_score_with_a_failed_check_sends_the_lane_back(self):
+        verdict = Verdict(score=None, source="checks-only", failed_checks=("unit",))
+        assert self.bands.classify(verdict) is Band.STOP
 
     def test_a_failed_hard_check_blocks_auto_approval(self):
         verdict = Verdict(score=0.99, source="jev", failed_checks=("mutation",))

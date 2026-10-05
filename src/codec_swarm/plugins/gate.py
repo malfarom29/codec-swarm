@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from codec_swarm.domain import Autonomy
+from codec_swarm.harness.config import OUTPUT_FILTERS, READ_ONLY_COMMANDS
 
 
 class Action(StrEnum):
@@ -45,7 +46,8 @@ ALWAYS_ASK = [
     (re.compile(r"\b(migrate|migration:run|db\s+push|alembic\s+upgrade)\b"), "database migration"),
 ]
 SHELL_CONTROL = re.compile(r"&&|\|\||[;|`<>]|\$\(")
-READ_ONLY_GIT = ("git status", "git diff", "git log", "git show", "git branch --show-current")  # allowed in every repo
+PIPE = re.compile(r"(?<!\|)\|(?!\|)")
+FILTER = re.compile(rf"^({'|'.join(OUTPUT_FILTERS)})(\s+[^|;&<>`$]*)?$")
 
 
 def _inside(worktree: Path, raw: str) -> bool:
@@ -88,12 +90,15 @@ class AllowlistGate:
     """Fallback CommandGate: only allowlisted commands run without asking, and never in Manual mode."""
 
     def __init__(self, allowlist: tuple[str, ...]) -> None:
-        self._allowlist = READ_ONLY_GIT + tuple(a.strip() for a in allowlist if a.strip())
+        self._allowlist = READ_ONLY_COMMANDS + tuple(a.strip() for a in allowlist if a.strip())
 
     def _allowlisted(self, command: str) -> bool:
-        if SHELL_CONTROL.search(command):
-            return False  # a chained or redirected command is never covered by its first part
-        return any(command == entry or command.startswith(entry + " ") for entry in self._allowlist)
+        """An allowlisted command, optionally with stderr merged and its output piped into read-only filters."""
+        head, *filters = [part.strip() for part in PIPE.split(command)]
+        head = re.sub(r"\s*2>&1$", "", head)
+        if SHELL_CONTROL.search(head) or not all(FILTER.match(f) for f in filters):
+            return False  # a chained, redirected or piped-into-anything-else command is never covered by its first part
+        return any(head == entry or head.startswith(entry + " ") for entry in self._allowlist)
 
     def decide(self, tool: str, tool_input: dict[str, Any], ctx: GateContext) -> GateDecision:
         hard = hard_rules(tool, tool_input, ctx)

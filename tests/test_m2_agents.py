@@ -7,13 +7,15 @@ import pytest
 import yaml
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from codec_swarm.domain import Autonomy, Handoff, Mission
-from codec_swarm.harness import BranchFlow, LocalOverrides, MissionExtras, load_pack, load_repo_config, resolve_session
+from codec_swarm.domain import Autonomy, Band, Handoff, JudgeBands, Mission
+from codec_swarm.harness import BranchFlow, Check, LocalOverrides, MissionExtras, load_pack, load_repo_config, resolve_session
 from codec_swarm.plugins.api import StepRequest
+from codec_swarm.plugins.checks import ChecksOnlyJudge
 from codec_swarm.plugins.claude_code import ClaudeCodeBackend
 from codec_swarm.plugins.gate import AllowlistGate, GateContext
 from codec_swarm.store import SessionStore
 from codec_swarm.workspace import Workspace, git
+from codec_swarm.workspace.github import GitHubPublisher
 
 scenarios("../features/m2_agents.feature")
 
@@ -184,6 +186,23 @@ def gate_answers(world, answer):
     assert world["decision"].action.value == answer, world["decision"]
 
 
+@then(parsers.parse('running "{command}" is allowed'))
+def running_allowed(world, command):
+    assert world["gate"].decide("Bash", {"command": command}, world["ctx"]).action.value == "allow"
+
+
+@then(parsers.parse('running "{command}" asks a human'))
+def running_asks(world, command):
+    assert world["gate"].decide("Bash", {"command": command}, world["ctx"]).action.value == "ask"
+
+
+@then(parsers.parse('the system prompt lists "{first}" and "{second}" as commands that run without asking'))
+def prompt_lists_commands(world, first, second):
+    prompt = world["spec"].system_prompt
+    section = prompt[prompt.index("# Commands you can run without asking"):]
+    assert f"`{first}`" in section and f"`{second}`" in section
+
+
 @then(parsers.parse('reading "{path}" is {verdict}'))
 def reading(world, path, verdict):
     action = world["gate"].decide("Read", {"file_path": path}, world["ctx"]).action.value
@@ -194,6 +213,74 @@ def reading(world, path, verdict):
 def writing(world, path, verdict):
     action = world["gate"].decide("Write", {"file_path": path, "content": "x"}, world["ctx"]).action.value
     assert action == {"allowed": "allow", "denied": "deny"}[verdict]
+
+
+# --- judge and publisher ---------------------------------------------------
+
+
+@when("the checks-only judge runs a passing check and a failing check")
+def checks_judge(world):
+    checks = (Check(id="unit", run="python3 -c 'print(42)'"), Check(id="lint", run="python3 -c 'raise SystemExit(1)'"))
+    judge = ChecksOnlyJudge(lambda m: (world["lane"].path, checks))
+    mission = Mission(ticket="CODEC-1423", repo="codec-payment")
+    world["verdict"] = anyio.run(judge.evaluate, mission, [])
+
+
+@then("the verdict has no score and lists the failing check")
+def verdict_failed(world):
+    assert world["verdict"].score is None
+    assert world["verdict"].failed_checks == ("lint",)
+
+
+@then("the lane goes back to the coder")
+def goes_back(world):
+    assert JudgeBands().classify(world["verdict"]) is Band.STOP
+
+
+class FakeGh:
+    """Stands in for the gh CLI: records calls and remembers the PR it 'opened'."""
+
+    def __init__(self):
+        self.calls = []
+        self.url = ""
+
+    def __call__(self, argv, cwd):
+        self.calls.append(list(argv))
+        if argv[:3] == ["gh", "pr", "list"]:
+            return self.url
+        if argv[:3] == ["gh", "pr", "create"]:
+            self.url = "https://github.com/example/codec-payment/pull/1"
+            return self.url
+        raise AssertionError(f"unexpected command {argv}")
+
+
+@when("the publisher opens the lane's PR")
+def publishes(world):
+    world["gh"] = FakeGh()
+    world["publisher"] = GitHubPublisher({"CODEC-1423": world["lane"]}, run=world["gh"])
+    world["mission"] = Mission(ticket="CODEC-1423", repo="codec-payment", title="Partial refunds")
+    handoffs = [Handoff(from_role="backend-coder", summary="Added POST /refunds.")]
+    world["pr_url"] = world["publisher"].publish(world["mission"], handoffs, {"source": "checks-only", "band": "review", "rationale": "unit: pass"})
+
+
+@then("origin has the lane branch")
+def origin_has_branch(world):
+    assert git(world["tmp"] / "origin.git", "branch", "--list", world["lane"].branch)
+
+
+@then("gh was asked to open a PR from the lane branch into develop")
+def gh_create_args(world):
+    create = next(c for c in world["gh"].calls if c[:3] == ["gh", "pr", "create"])
+    assert create[create.index("--base") + 1] == "develop"
+    assert create[create.index("--head") + 1] == world["lane"].branch
+    assert create[create.index("--title") + 1] == "CODEC-1423: Partial refunds"
+
+
+@then("publishing again returns the same PR without a second gh pr create")
+def idempotent(world):
+    again = world["publisher"].publish(world["mission"], [], None)
+    assert again == world["pr_url"]
+    assert sum(c[:3] == ["gh", "pr", "create"] for c in world["gh"].calls) == 1
 
 
 # --- live Claude Code step -------------------------------------------------

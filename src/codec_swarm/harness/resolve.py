@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from codec_swarm.domain import Mission
-from codec_swarm.harness.config import RepoConfig
+from codec_swarm.harness.config import OUTPUT_FILTERS, READ_ONLY_COMMANDS, RepoConfig
 from codec_swarm.harness.packs import PackDefinition
 
 LAYER_SEPARATOR = "\n\n---\n\n"
@@ -53,8 +53,22 @@ def _unique(*groups: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(seen)
 
 
+def commands_section(repo: RepoConfig) -> str:
+    commands = (*READ_ONLY_COMMANDS, *repo.allowlist)
+    return "\n".join([
+        "# Commands you can run without asking",
+        "",
+        *(f"- `{c}`" for c in commands),
+        "",
+        f"You may add `2>&1` and pipe their output into {', '.join(f'`{f}`' for f in OUTPUT_FILTERS)}.",
+        "Any other command is blocked. Do not work around a blocked command: list it in your handoff questions.",
+    ])
+
+
 def mission_layer(mission: Mission, scenarios: str | None = None) -> str:
     lines = ["# Layer 5 · Mission", f"Ticket {mission.ticket} on {mission.repo}: {mission.title or 'untitled'}."]
+    if mission.description:
+        lines += ["", mission.description.strip()]
     if scenarios:
         lines += ["", "Approved scenarios:", "", scenarios.strip()]
     return "\n".join(lines)
@@ -84,6 +98,7 @@ def resolve_session(
         pack.layer(f"constitution/stacks/{repo.stack}.md"),
         pack.role_prompt(role),
         mission_layer(mission, scenarios),
+        commands_section(repo),
     ]
     return SessionSpec(
         role=role,

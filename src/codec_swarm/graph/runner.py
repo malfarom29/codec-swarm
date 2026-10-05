@@ -14,7 +14,7 @@ from langgraph.types import Command
 
 from codec_swarm.domain import Mission, Pack
 from codec_swarm.graph.build import build_graph
-from codec_swarm.plugins.api import AgentBackend, EventSink, HandoffRecorder, Judge, Router
+from codec_swarm.plugins.api import AgentBackend, EventSink, HandoffRecorder, Judge, Publisher, Router
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,11 @@ class RunResult:
     status: str  # waiting | pr_ready
     gate: dict[str, Any] | None = None
     trail: list[str] = field(default_factory=list)
+    pr_url: str | None = None
+
+
+class MissionExists(RuntimeError):
+    """The ticket already has a mission in the checkpointer; answer or recover it instead."""
 
 
 class MissionRunner:
@@ -36,10 +41,11 @@ class MissionRunner:
         judge: Judge,
         events: EventSink,
         recorder: HandoffRecorder | None = None,
+        publisher: Publisher | None = None,
     ):
         self._db_path = db_path
         self._events = events
-        self._builder = build_graph(pack, backend, router, judge, events, recorder)
+        self._builder = build_graph(pack, backend, router, judge, events, recorder, publisher)
 
     @asynccontextmanager
     async def _graph(self) -> AsyncIterator[CompiledStateGraph]:
@@ -51,9 +57,11 @@ class MissionRunner:
         return {"configurable": {"thread_id": ticket}}
 
     async def start(self, mission: Mission) -> RunResult:
-        self._events.append(mission.ticket, "mission.started", {"repo": mission.repo, "autonomy": mission.autonomy.value})
         state = {"mission": mission.model_dump(mode="json"), "reworks": 0}
         async with self._graph() as graph:
+            if (await graph.aget_state(self._config(mission.ticket))).values:
+                raise MissionExists(f"{mission.ticket} already has a mission")
+            self._events.append(mission.ticket, "mission.started", {"repo": mission.repo, "autonomy": mission.autonomy.value})
             return await self._advance(graph, mission.ticket, state)
 
     async def answer(self, ticket: str, answer: str) -> RunResult:
@@ -81,4 +89,4 @@ class MissionRunner:
             gate = snapshot.interrupts[0].value
             self._events.append(ticket, "gate.opened", gate)
             return RunResult(status="waiting", gate=gate, trail=trail)
-        return RunResult(status=snapshot.values.get("status", "unknown"), trail=trail)
+        return RunResult(status=snapshot.values.get("status", "unknown"), trail=trail, pr_url=snapshot.values.get("pr_url"))

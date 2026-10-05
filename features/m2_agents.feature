@@ -51,11 +51,40 @@ Feature: M2 real agents
       | cat ../../other-repo/.env   | ask    |
       | npm run deploy              | ask    |
 
+  Scenario: Read-only output filters keep an allowlisted command allowed
+    Given the command gate with the repo allowlist "uv run pytest"
+    Then running "uv run pytest -q 2>&1 | tail -20" is allowed
+    And running "uv run pytest | grep FAILED" is allowed
+    And running "uv run pytest | sh" asks a human
+    And running "uv run pytest > out.txt" asks a human
+    And running "uv run pytest 2>&1 | tail -20 && git push" asks a human
+
+  Scenario: Agents are told which commands run without asking
+    Given the Codec standard pack from packs/codec-standard
+    And a nestjs repo with no config
+    When the harness resolves the backend-coder session for lane CODEC-1423 on codec-payment
+    Then the system prompt lists "npm run test" and "git status" as commands that run without asking
+
   Scenario: File tools cannot leave the lane worktree
     Given the command gate with the repo allowlist "npm run test"
     Then reading "src/refunds.ts" is allowed
     And reading "../other-repo/.env" is denied
     And writing "/etc/hosts" is denied
+
+  Scenario: The checks-only judge runs the repo's checks in the lane
+    Given a local origin repo with a develop branch
+    And the workspace prepared lane CODEC-1423 "Partial refunds"
+    When the checks-only judge runs a passing check and a failing check
+    Then the verdict has no score and lists the failing check
+    And the lane goes back to the coder
+
+  Scenario: An approved lane is pushed and opened as a PR
+    Given a local origin repo with a develop branch
+    And the workspace prepared lane CODEC-1423 "Partial refunds"
+    When the publisher opens the lane's PR
+    Then origin has the lane branch
+    And gh was asked to open a PR from the lane branch into develop
+    And publishing again returns the same PR without a second gh pr create
 
   @live
   Scenario: A real Claude Code step ends with a structured handoff

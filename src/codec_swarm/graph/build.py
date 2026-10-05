@@ -12,7 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from codec_swarm.domain import Autonomy, Band, GateKind, Handoff, JudgeBands, Mission, Pack
-from codec_swarm.plugins.api import AgentBackend, EventSink, HandoffRecorder, Judge, Router, StepRequest
+from codec_swarm.plugins.api import AgentBackend, EventSink, HandoffRecorder, Judge, Publisher, Router, StepRequest
 
 APPROVE = "approve"
 SEND_BACK = "send_back"
@@ -26,6 +26,7 @@ class MissionState(TypedDict, total=False):
     verdict: dict[str, Any] | None
     reworks: int  # judge send-backs so far
     status: str
+    pr_url: str | None
 
 
 def _mission(state: MissionState) -> Mission:
@@ -39,6 +40,7 @@ def build_graph(
     judge: Judge,
     events: EventSink,
     recorder: HandoffRecorder | None = None,
+    publisher: Publisher | None = None,
 ) -> StateGraph:
     graph = StateGraph(MissionState)
 
@@ -78,7 +80,20 @@ def build_graph(
             nxt = pack.rework_role if reworks <= pack.max_rework else "review_gate"
         record = {**verdict.model_dump(), "band": band.value}
         events.append(mission.ticket, "verdict", {**record, "next": nxt}, role="judge")
-        return {"trail": ["judge"], "verdict": record, "next": nxt, "reworks": reworks}
+        update: MissionState = {"trail": ["judge"], "verdict": record, "next": nxt, "reworks": reworks}
+        if nxt == pack.rework_role:
+            # The coder starts from what the judge actually saw, not from the last role's claims.
+            failed = ", ".join(verdict.failed_checks) or "none"
+            handoff = Handoff(
+                from_role="judge",
+                summary=f"The judge sent this lane back (band {band.value}). Failed checks: {failed}.\n\n{verdict.rationale}",
+                send_back=True,
+            )
+            if recorder is not None:
+                sha = recorder.record(mission, len(state.get("handoffs", [])) + 1, handoff, nxt)
+                handoff = handoff.model_copy(update={"commit_sha": sha})
+            update["handoffs"] = [handoff.model_dump()]
+        return update
 
     def gate_node(kind: GateKind, on_approve: Callable[[MissionState], str], on_send_back: Callable[[MissionState], str]):
         # A gate node re-runs from the top when resumed, so nothing before interrupt() may have side effects.
@@ -88,14 +103,22 @@ def build_graph(
                 return {"next": on_approve(state)}
             trail = state.get("trail", [])
             answer = interrupt({"kind": kind.value, "after": trail[-1] if trail else None, "verdict": state.get("verdict")})
-            return {"next": on_approve(state) if answer == APPROVE else on_send_back(state)}
+            if answer == APPROVE:
+                return {"next": on_approve(state)}
+            note = Handoff(from_role="human", summary=f"Sent back at the {kind.value} gate.", send_back=True)
+            return {"next": on_send_back(state), "handoffs": [note.model_dump()]}
 
         return run
 
     def done_node(state: MissionState) -> MissionState:
         mission = _mission(state)
-        events.append(mission.ticket, "mission.done", {"status": "pr_ready"})
-        return {"status": "pr_ready"}
+        url = None
+        if publisher is not None:
+            handoffs = [Handoff.model_validate(h) for h in state.get("handoffs", [])]
+            url = publisher.publish(mission, handoffs, state.get("verdict"))
+            events.append(mission.ticket, "pr.opened", {"url": url})
+        events.append(mission.ticket, "mission.done", {"status": "pr_ready", "pr_url": url})
+        return {"status": "pr_ready", "pr_url": url}
 
     # Approving a review-band verdict is "approve and open PR", so it skips the PR gate.
     gates = {

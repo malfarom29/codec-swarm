@@ -37,6 +37,12 @@ Feature: M1 engine
     Then the mission is PR ready
     And the roles ran in order: specifier, architect, backend-coder, reviewer, hardener, qa, judge, backend-coder, reviewer, hardener, qa, judge
 
+  Scenario: A lane the judge sends back starts from the judge's verdict
+    Given a gated mission for CODEC-1423 on codec-payment
+    And the judge scores 0.60 then 0.97
+    When the mission runs and I approve every gate
+    Then the backend-coder's second step starts from the judge's handoff
+
   Scenario: A lane that keeps failing the judge goes to human review
     Given a gated mission for CODEC-1423 on codec-payment
     And the judge scores 0.50

@@ -28,7 +28,7 @@ mcp_catalog:
 roles:
   specifier:
     model: opus
-    mcp: [atlassian]
+    mcp: []  # atlassian joins when Jira intake lands; until then the ticket arrives in the mission layer
     skills: []
     max_turns: 30
   architect:

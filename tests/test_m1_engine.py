@@ -127,6 +127,13 @@ def roles_in_order(world, roles):
     assert world["result"].trail == [r.strip() for r in roles.split(",")]
 
 
+@then("the backend-coder's second step starts from the judge's handoff")
+def coder_starts_from_judge(world):
+    incoming = [h for role, h in world["backend"].requests if role == "backend-coder"]
+    assert incoming[1] is not None and incoming[1].from_role == "judge"
+    assert incoming[1].send_back
+
+
 @then(parsers.parse("the judge ran {count:d} times"))
 def judge_runs(world, count):
     assert world["judge"].calls == count

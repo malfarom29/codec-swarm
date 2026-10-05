@@ -18,11 +18,13 @@ class FakeBackend:
     send_back_once: set[str] = field(default_factory=set)  # roles whose first handoff sends the work back
     crash_on: str | None = None  # role whose step raises BackendCrash
     calls: list[str] = field(default_factory=list)
+    requests: list[tuple[str, Handoff | None]] = field(default_factory=list)  # (role, incoming handoff)
     _sent_back: set[str] = field(default_factory=set)
 
     async def run_step(self, request: StepRequest) -> AsyncIterator[AgentEvent]:
         role = request.role
         self.calls.append(role)
+        self.requests.append((role, request.incoming))
         if role == self.crash_on:
             raise BackendCrash(f"backend crashed while {role} worked on {request.mission.ticket}")
         send_back = role in self.send_back_once and role not in self._sent_back
