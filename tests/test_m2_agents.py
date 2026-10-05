@@ -186,7 +186,7 @@ def gate_answers(world, answer):
     assert world["decision"].action.value == answer, world["decision"]
 
 
-@then("the gate answers ask because it runs inline code")
+@then("the gate asks a human because it runs inline code")
 def asks_inline(world):
     assert world["decision"].action.value == "ask"
     assert world["decision"].source == "always-ask"

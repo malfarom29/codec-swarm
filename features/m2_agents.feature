@@ -54,7 +54,7 @@ Feature: M2 real agents
   Scenario Outline: Inline code always needs a human, whatever the allowlist or Jev says
     Given the command gate with the repo allowlist "python3, node, bash"
     When an agent asks to run "<command>" in Auto mode
-    Then the gate answers ask because it runs inline code
+    Then the gate asks a human because it runs inline code
 
     Examples:
       | command                           |
