@@ -186,6 +186,13 @@ def gate_answers(world, answer):
     assert world["decision"].action.value == answer, world["decision"]
 
 
+@then("the gate answers ask because it runs inline code")
+def asks_inline(world):
+    assert world["decision"].action.value == "ask"
+    assert world["decision"].source == "always-ask"
+    assert world["decision"].reason == "runs inline code"
+
+
 @then(parsers.parse('running "{command}" is allowed'))
 def running_allowed(world, command):
     assert world["gate"].decide("Bash", {"command": command}, world["ctx"]).action.value == "allow"

@@ -44,6 +44,8 @@ ALWAYS_ASK = [
     (re.compile(r"\b(kubectl|helm)\b"), "touches a cluster"),
     (re.compile(r"\bterraform\s+(apply|destroy)\b"), "changes infrastructure"),
     (re.compile(r"\b(migrate|migration:run|db\s+push|alembic\s+upgrade)\b"), "database migration"),
+    # Code passed inline can't be judged from the command line, so neither the allowlist nor Jev may approve it.
+    (re.compile(r"<<|\b(python3?|node|ruby|perl)\s+-[ce]\b|\b(ba|z)?sh\s+-c\b|\beval\b"), "runs inline code"),
 ]
 SHELL_CONTROL = re.compile(r"&&|\|\||[;|`<>]|\$\(")
 PIPE = re.compile(r"(?<!\|)\|(?!\|)")

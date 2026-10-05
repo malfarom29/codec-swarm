@@ -51,6 +51,19 @@ Feature: M2 real agents
       | cat ../../other-repo/.env   | ask    |
       | npm run deploy              | ask    |
 
+  Scenario Outline: Inline code always needs a human, whatever the allowlist or Jev says
+    Given the command gate with the repo allowlist "python3, node, bash"
+    When an agent asks to run "<command>" in Auto mode
+    Then the gate answers ask because it runs inline code
+
+    Examples:
+      | command                           |
+      | python3 -c "import os; print(1)"  |
+      | python3 << 'EOF'                  |
+      | node -e "require('fs')"           |
+      | bash -c "rm -rf build"            |
+      | eval "$CMD"                       |
+
   Scenario: Read-only output filters keep an allowlisted command allowed
     Given the command gate with the repo allowlist "uv run pytest"
     Then running "uv run pytest -q 2>&1 | tail -20" is allowed
