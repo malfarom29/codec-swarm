@@ -3,8 +3,15 @@
 {% block main %}
 <h1>Orchestration</h1>
 <p class="sub">What decides for the agents: models, who goes next, which commands run alone, and when a lane is done.</p>
+{% if error %}<div class="panel note bad">{{ error }}</div>{% elif saved %}<div class="panel note">Saved. New missions use these settings.</div>{% endif %}
+<form method="post" action="/orchestration" class="panel settings" data-orchestration>
+  <label class="check"><input type="checkbox" name="jev_enabled" value="on" {{ "checked" if o.jev_enabled }} {{ "disabled" if not jev_key }}> Use Jev{% if not jev_key %} (needs TYPESAFE_API_KEY){% endif %}</label>
+  <label>Command gate threshold <input type="number" name="gate_threshold" step="0.01" min="0.5" max="0.99" value="{{ '%.2f' | format(o.gate_threshold) }}"></label>
+  <label>Margin <input type="number" name="gate_margin" step="0.01" min="0" max="0.1" value="{{ '%.2f' | format(o.gate_margin) }}"></label>
+  <button class="primary">Save</button>
+</form>
 <div class="panel">
-  <strong>Jev</strong> {% if jev_on %}<span class="pill aqua">on · {{ jev_model }}</span>{% else %}<span class="pill dim">off: no TYPESAFE_API_KEY</span>{% endif %}
+  <strong>Jev</strong> {% if jev_on %}<span class="pill aqua">on · {{ jev_model }}</span>{% elif jev_key %}<span class="pill dim">off: turned off here</span>{% else %}<span class="pill dim">off: no TYPESAFE_API_KEY</span>{% endif %}
   <p class="sub" style="margin:6px 0 0">{% if jev_on %}Jev routes models, picks send-back targets, scores commands in Auto mode and judges lanes. Any Jev error falls back to the fixed rule for that one decision.{% else %}Fixed model per role, pack order, the allowlist and the checks-only judge.{% endif %}</p>
 </div>
 <div class="panel tablewrap">

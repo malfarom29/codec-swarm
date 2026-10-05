@@ -30,8 +30,11 @@ class MissionExtras(BaseModel, frozen=True):
 class LocalOverrides(BaseModel, frozen=True):
     """Machine-local tweaks from the Harness screen. They change settings, never remove capabilities."""
 
-    model: str | None = None
+    model: str | None = None  # forced for every step, beating the router's pick (the CLI's --model)
+    default_model: str | None = None  # replaces the pack's model, used whenever the router has no pick (Jev off)
     max_turns: int | None = None
+    extra_mcp: tuple[str, ...] = ()  # added to the role's servers, never replacing them
+    extra_skills: tuple[str, ...] = ()
 
 
 class SessionSpec(BaseModel, frozen=True):
@@ -102,7 +105,7 @@ def resolve_session(
 ) -> SessionSpec:
     spec = pack.roles[role]
     role_extras = repo.roles.get(role)
-    mcp_names = _unique(spec.mcp, role_extras.extra_mcp if role_extras else (), extras.mcp)
+    mcp_names = _unique(spec.mcp, role_extras.extra_mcp if role_extras else (), extras.mcp, overrides.extra_mcp)
     unknown = [n for n in mcp_names if n not in pack.mcp_catalog]
     if unknown:
         raise ValueError(f"MCP servers not in pack {pack.pack.name}'s catalog: {', '.join(unknown)}")
@@ -119,12 +122,12 @@ def resolve_session(
     return SessionSpec(
         role=role,
         cwd=worktree,
-        model=overrides.model or spec.model,
+        model=overrides.model or overrides.default_model or spec.model,
         model_forced=overrides.model is not None,
         plans_lanes=spec.plans_lanes,
         system_prompt=LAYER_SEPARATOR.join(layer for layer in layers if layer),
         mcp_servers={name: pack.mcp_catalog[name] for name in mcp_names},
-        skills=_unique(spec.skills, role_extras.extra_skills if role_extras else (), extras.skills),
+        skills=_unique(spec.skills, role_extras.extra_skills if role_extras else (), extras.skills, overrides.extra_skills),
         max_turns=overrides.max_turns or spec.max_turns,
     )
 

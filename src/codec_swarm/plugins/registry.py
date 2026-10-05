@@ -40,6 +40,8 @@ def build_plugins(
     use_jev: bool,
     ask: SystemOne | None = None,
     env: dict[str, str] | None = None,
+    gate_threshold: float = 0.90,
+    gate_margin: float = 0.03,
 ) -> Plugins:
     """A missing TYPESAFE_API_KEY turns Jev off whatever the mission asked for."""
     if not (use_jev and (ask is not None or jev_available(env))):
@@ -48,7 +50,7 @@ def build_plugins(
     ask = ask or JevClient()
     return Plugins(
         router=JevRouter(pack, ask),
-        gate=JevCommandGate(ask, config.allowlist, cache),
+        gate=JevCommandGate(ask, config.allowlist, cache, gate_threshold, gate_margin),
         judge=JevJudge(ask, lane_for),
         jev=True,
     )

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Jira · codec-swarm{% endblock %}
+{% block main %}
+<h1>Jira</h1>
+<p class="sub">The orchestrator reads your tickets through Jira's REST API with an API token. Agents that need Jira during a step use the Atlassian MCP server instead; add it to a role on the Harness page.</p>
+{% if error %}<div class="panel note bad">{{ error }}</div>{% endif %}
+{% if who %}<div class="panel note">Connected as {{ who }}.</div>{% endif %}
+{% if jira_connected %}
+<div class="panel" data-jira="connected">
+  <p><span class="pill">connected</span> <span class="mono">{{ jira.site }}</span> as <span class="mono">{{ jira.email }}</span>{% if jira_synced %} · last sync {{ jira_synced }} UTC{% endif %}</p>
+  {% if jira_error %}<p class="pill red">{{ jira_error }}</p>{% endif %}
+  <form method="post" action="/jira/jql" class="stack">
+    <label>JQL: which tickets show up in Intake <textarea name="jql" rows="2">{{ jira.jql }}</textarea></label>
+    <div class="actions"><button class="primary">Save and sync</button></div>
+  </form>
+  <form method="post" action="/jira/disconnect" style="margin-top:12px"><button>Disconnect</button> <span class="muted">removes the token from ~/.codec-swarm/.env</span></form>
+</div>
+<h2>Synced tickets</h2>
+<div class="panel tablewrap"><table><thead><tr><th>Key</th><th>Summary</th><th>Status</th><th></th></tr></thead><tbody>
+{% for t in intake %}<tr><td class="id">{{ t.key }}</td><td>{{ t.summary }}</td><td>{{ t.status }}</td><td><a href="/missions/new?{{ {'ticket': t.key, 'title': t.summary, 'description': t.description} | urlencode }}">Start mission</a></td></tr>{% else %}<tr><td colspan="4" class="empty">No tickets match the JQL, or all of them already have a mission.</td></tr>{% endfor %}
+</tbody></table></div>
+{% else %}
+<form method="post" action="/jira/connect" class="stack panel" data-jira="connect">
+  <label>Site <input name="site" required placeholder="https://your-team.atlassian.net" value="{{ jira.site }}"></label>
+  <label>Email <input name="email" type="email" required value="{{ jira.email }}" autocomplete="username"></label>
+  <label>API token <input name="token" type="password" required autocomplete="off"></label>
+  <p class="muted">Create one at id.atlassian.com → Security → API tokens. It is checked against Jira, then saved only to <code>~/.codec-swarm/.env</code> (readable by you alone), never to the database or the event log.</p>
+  <label>JQL <textarea name="jql" rows="2">{{ jira.jql }}</textarea></label>
+  <div><button class="primary">Connect and fetch tickets</button></div>
+</form>
+<h2>Until then: example tickets</h2>
+<div class="panel tablewrap"><table><tbody>{% for t in intake %}<tr><td class="id">{{ t.key }}</td><td>{{ t.summary }} <span class="pill amber">example</span></td></tr>{% endfor %}</tbody></table></div>
+{% endif %}
+{% endblock %}

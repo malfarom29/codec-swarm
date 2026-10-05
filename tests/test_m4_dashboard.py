@@ -1,8 +1,12 @@
 """Step definitions for features/m4_dashboard.feature: the web app over a fake mission service."""
 
+import os
 import re
+import sqlite3
+import stat
 
 import anyio
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -15,6 +19,8 @@ from codec_swarm.plugins.fallback import PackOrderRouter
 from codec_swarm.plugins.jev import JevClient
 from codec_swarm.service import MissionRequest, MissionRuntime, MissionService, repo_name
 from codec_swarm.domain import Mission
+from codec_swarm.harness import load_pack, resolve_session
+from codec_swarm.harness.config import RepoConfig
 from codec_swarm.web.app import create_app
 
 scenarios("../features/m4_dashboard.feature")
@@ -27,9 +33,10 @@ class FakeMissionService(MissionService):
         names = tuple(repo_name(u) for u in request.repo_urls)
         mission = Mission(ticket=request.ticket, repo="", repos=names, title=request.title, description=request.description, autonomy=request.autonomy)
         backend, judge = FakeBackend(), FakeJudge()
+        self.backend = backend
 
         def runner(part):
-            return MissionRunner(self.db, CODEC_STANDARD, backend, PackOrderRouter(), judge, self.events, part=part)
+            return MissionRunner(self.db, CODEC_STANDARD, backend, PackOrderRouter(), judge, self.events, part=part, chat=self.chat)
 
         coordinator = MissionCoordinator(runner("planning"), runner("lane"), self.events)
         runtime = MissionRuntime(request, mission, "codec-standard", False, coordinator, JevClient())
@@ -38,8 +45,10 @@ class FakeMissionService(MissionService):
 
 
 @pytest.fixture
-def web(tmp_path):
-    return {"tmp": tmp_path}
+def web(tmp_path, monkeypatch):
+    monkeypatch.delenv("JIRA_API_TOKEN", raising=False)  # a developer's own token must not leak into these tests
+    yield {"tmp": tmp_path}
+    os.environ.pop("JIRA_API_TOKEN", None)
 
 
 @given(parsers.parse('the dashboard runs with a fake mission service and launch token "{token}"'))
@@ -190,13 +199,13 @@ def change_event(web):
 
 @then("the page lists the specifier with model opus and floor sonnet")
 def harness_specifier(web):
-    row = re.search(r'data-role="specifier">(.*?)</tr>', web["response"].text, re.S).group(1)
+    row = re.search(r'data-role="specifier"[^>]*>(.*?)</tr>', web["response"].text, re.S).group(1)
     assert ">opus<" in row and ">sonnet<" in row
 
 
 @then("the page lists the backend-coder's MCP server context7")
 def harness_mcp(web):
-    row = re.search(r'data-role="backend-coder">(.*?)</tr>', web["response"].text, re.S).group(1)
+    row = re.search(r'data-role="backend-coder"[^>]*>(.*?)</tr>', web["response"].text, re.S).group(1)
     assert "context7" in row
 
 
@@ -208,3 +217,189 @@ def orchestration_bands(web):
 @then("the page shows the command-gate band from 0.87 to 0.93")
 def orchestration_gate(web):
     assert "unsure 0.87–0.93" in web["response"].text
+
+
+# --- editable harness and orchestration ------------------------------------------
+
+
+@when(parsers.parse("I set the {role} of {pack} to model {model} with MCP server {server}"))
+def set_role(web, role, pack, model, server):
+    form = {"model": model, "extra_skills": ""}
+    if server != "none":
+        form["extra_mcp"] = [server]
+    web["response"] = web["client"].post(f"/harness/{pack}/{role}", data=form)
+
+
+@when(parsers.parse("I set the {role} of {pack} to model {model} with no MCP server"))
+def set_role_no_mcp(web, role, pack, model):
+    web["response"] = web["client"].post(f"/harness/{pack}/{role}", data={"model": model})
+
+
+@then(parsers.parse("the harness page shows {role} overridden to {model} with +{server}"))
+def harness_override(web, role, model, server):
+    row = re.search(rf'data-role="{role}" id="[^"]+">(.*?)</tr>', web["response"].text, re.S).group(1)
+    assert f'→ <span class="pill amber">{model}</span>' in row and f"+{server}" in row
+
+
+@then(parsers.parse("a {role} session resolves to model {model} with servers {first} and {second}"))
+def session_resolves(web, role, model, first, second):
+    pack = load_pack("codec-standard")
+    mission = Mission(ticket="T-1", repo="r", title="t")
+    overrides = web["service"].local_overrides("codec-standard", role)
+    spec = resolve_session(pack, RepoConfig(stack="python"), role, web["tmp"], mission, overrides=overrides)
+    assert spec.model == model and not spec.model_forced
+    assert list(spec.mcp_servers) == [first, second]
+
+
+@then(parsers.parse('the harness page says "{text}"'))
+def harness_says(web, text):
+    assert text in web["response"].text
+
+
+@then(parsers.parse("the {role} of {pack} has no override"))
+def no_override(web, role, pack):
+    assert web["service"].settings.role_override(pack, role).model is None
+
+
+@when(parsers.parse("I save orchestration with Jev off, threshold {threshold} and margin {margin}"))
+def save_orchestration(web, threshold, margin):
+    web["response"] = web["client"].post("/orchestration", data={"gate_threshold": threshold, "gate_margin": margin})
+
+
+@then(parsers.parse("the page shows the command-gate band from {low} to {high}"))
+def gate_band(web, low, high):
+    assert f"unsure {low}–{high}" in web["response"].text
+
+
+@then("the orchestration settings say Jev is off")
+def jev_off(web):
+    assert web["service"].settings.orchestration().jev_enabled is False
+
+
+# --- chat and attach ------------------------------------------------------------
+
+
+@when(parsers.parse('I send "{text}" to the {role} of lane {lane} in {ticket}'))
+def send_chat(web, text, role, lane, ticket):
+    web["chat"] = text
+    response = web["client"].post(f"/missions/{ticket}/chat", data={"lane": lane, "role": role, "text": text}, follow_redirects=False)
+    assert response.status_code == 303
+
+
+@then(parsers.parse("the mission page of {ticket} shows that message as {state}"))
+def chat_state(web, ticket, state):
+    page = web["client"].get(f"/missions/{ticket}").text
+    log = page[page.index("data-chat") :]
+    assert f"{state}</span> {web['chat']}" in log[: log.index("</ul>")]
+
+
+@then(parsers.parse('the {role}\'s step received "{text}"'))
+def step_received(web, role, text):
+    assert (role, (text,)) in web["service"].backend.messages
+
+
+@given(parsers.parse('the {role} of lane {lane} in {ticket} ran as session "{session}"'))
+def ran_as(web, role, lane, ticket, session):
+    web["service"]._sessions.record(ticket, lane, role, session, "sonnet", 3, 0.1)
+
+
+@then(parsers.parse('it shows "{command}" for the {role}'))
+def shows_attach(web, command, role):
+    panel = _section(web, f'data-role="{role}"', "</section>")
+    assert command in panel and "Open in Terminal" in panel
+
+
+# --- Jira -----------------------------------------------------------------------
+
+
+@then(parsers.parse("the Intake column shows {key} marked as an example"))
+def intake_example(web, key):
+    card = re.search(rf'data-intake="{key}">(.*?)</div>\s*</div>', web["response"].text, re.S)
+    assert card and "example</span>" in card.group(1)
+
+
+@then("the Jira bar offers to connect Jira")
+def offers_connect(web):
+    html = web["response"].text
+    assert 'data-jira="examples"' in html and "Connect Jira" in html
+
+
+def _jira_transport(handler):
+    def wrapped(request: httpx.Request) -> httpx.Response:
+        return handler(request)
+
+    return httpx.MockTransport(wrapped)
+
+
+@given(parsers.parse('Jira at "{site}" answers for "{email}" with ticket {key} "{summary}"'))
+def jira_answers(web, site, email, key, summary):
+    def handler(request):
+        assert str(request.url).startswith(site)
+        if request.url.path == "/rest/api/3/myself":
+            return httpx.Response(200, json={"displayName": "Me"})
+        description = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Partial captures must refund."}]}]}
+        issue = {"key": key, "fields": {"summary": summary, "status": {"name": "To Do"}, "priority": {"name": "High"}, "description": description}}
+        return httpx.Response(200, json={"issues": [issue]})
+
+    web["service"].jira_transport = _jira_transport(handler)
+
+
+@given(parsers.parse('Jira at "{site}" rejects every token'))
+def jira_rejects(web, site):
+    web["service"].jira_transport = _jira_transport(lambda request: httpx.Response(401, json={}))
+
+
+@when(parsers.parse('I connect Jira with site "{site}", email "{email}" and a token'))
+def connect_jira(web, site, email):
+    web["jira_token"] = "test-token-not-real-123"
+    form = {"site": site, "email": email, "token": web["jira_token"], "jql": ""}
+    web["response"] = web["client"].post("/jira/connect", data=form)
+
+
+@then(parsers.parse("the Intake column shows {key} and no example tickets"))
+def intake_synced(web, key):
+    html = web["client"].get("/").text
+    assert f'data-intake="{key}"' in html and 'data-intake="CODEC-901"' not in html
+
+
+@then("the token is in the root's .env, readable only by me, and nowhere in the database")
+def token_stored(web):
+    env = web["service"].root / ".env"
+    assert web["jira_token"] in env.read_text()
+    assert stat.S_IMODE(env.stat().st_mode) == 0o600
+    db = sqlite3.connect(web["service"].db)
+    dump = "\n".join(db.iterdump())
+    assert web["jira_token"] not in dump
+
+
+@then(parsers.parse("the Start mission link for {key} fills in its title"))
+def start_link(web, key):
+    html = web["client"].get("/").text
+    href = re.search(rf'data-intake="{key}".*?class="start" href="([^"]+)"', html, re.S).group(1).replace("&amp;", "&")
+    form = web["client"].get(href).text
+    assert 'value="Refund partial captures"' in form and "Partial captures must refund." in form
+
+
+@then(parsers.parse('the Jira page says "{text}"'))
+def jira_says(web, text):
+    assert text in web["response"].text
+
+
+@then("Jira is not connected")
+def jira_not_connected(web):
+    assert not web["service"].jira_connected()
+    assert not (web["service"].root / ".env").exists()
+
+
+# --- my requests ----------------------------------------------------------------
+
+
+@then(parsers.parse('{ticket} is at the step "{label}"'))
+def request_step(web, ticket, label):
+    card = re.search(rf'data-request="{ticket}"(.*?)</article>', web["response"].text, re.S).group(1)
+    assert f'<li class="now">{label}</li>' in card
+
+
+@then("it says I need to approve the spec")
+def needs_spec(web):
+    assert "Waiting for you: approve the spec" in web["response"].text

@@ -44,17 +44,31 @@
   </ul>
 </section>
 <section x-show="tab === 'agents'" x-cloak data-tab="agents">
-  {% for repo, lane in m.lanes.items() %}
-  <h2>{{ repo }}</h2>
+  <p class="sub">A message waits until that role's next step starts, then joins its prompt. To take over a session yourself, attach after its step ends.</p>
+  {% for key, heading, roles in groups %}
+  <h2>{{ heading }}</h2>
   <div class="lanes">
-    {% for role, lines in agent_terminals[repo].items() %}{% set r = lane.roles.get(role) %}
-    <section class="panel lane" data-lane="{{ repo }}" data-role="{{ role }}">
-      <h3><span>{{ role }}</span>{% if lane.current_role == role and lane.status == "running" %}<span class="pill aqua">working</span>{% endif %}
+    {% for role, lines, r, working, messages, attach in roles %}
+    <section class="panel lane" data-lane="{{ key }}" data-role="{{ role }}">
+      <h3><span>{{ role }}</span>{% if working %}<span class="pill aqua">working</span>{% endif %}
         {% if r %}<span class="pill dim">{{ r.model or "default model" }}</span><span class="muted">{{ r.turns }} turns · ${{ "%.2f" | format(r.cost_usd) }}</span>{% endif %}</h3>
       <pre class="term" data-terminal>{% for line in lines %}{{ line }}
 {% endfor %}</pre>
+      {% if messages %}<ul class="chatlog" data-chat>{% for c in messages %}<li><span class="pill {{ 'dim' if c.delivered_at else 'amber' }}">{{ "delivered" if c.delivered_at else "queued" }}</span> {{ c.text }}</li>{% endfor %}</ul>{% endif %}
+      <form method="post" action="/missions/{{ m.ticket }}/chat" class="chat">
+        <input type="hidden" name="lane" value="{{ key }}"><input type="hidden" name="role" value="{{ role }}">
+        <input name="text" id="chat-{{ key or 'planning' }}-{{ role }}" hx-preserve="true" placeholder="Message {{ role }}…" autocomplete="off" aria-label="Message {{ role }}">
+        <button>Send</button>
+      </form>
+      {% if attach %}
+      <div class="attach" x-data="{ copied: false }">
+        <code data-attach>{{ attach }}</code>
+        <button type="button" @click="navigator.clipboard.writeText($el.parentElement.querySelector('code').textContent); copied = true; setTimeout(() => copied = false, 1500)" x-text="copied ? 'Copied' : 'Copy'">Copy</button>
+        <form method="post" action="/missions/{{ m.ticket }}/attach"><input type="hidden" name="lane" value="{{ key }}"><input type="hidden" name="role" value="{{ role }}"><button>Open in Terminal</button></form>
+      </div>
+      {% endif %}
     </section>
-    {% else %}<p class="empty">{{ "waiting for this lane to start…" if lane.status == "not_started" else "no output recorded for this lane (older missions did not tag events by lane)" }}</p>{% endfor %}
+    {% else %}<p class="empty">waiting for this lane to start…</p>{% endfor %}
   </div>
   {% endfor %}
 </section>

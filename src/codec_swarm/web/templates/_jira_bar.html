@@ -1,0 +1,15 @@
+<div class="jirabar panel" data-jira="{{ 'connected' if jira_connected else 'examples' }}">
+  {% if jira_connected %}
+  <span><strong>Jira</strong> <span class="pill">connected</span> <span class="mono">{{ jira.site.removeprefix("https://") }}</span></span>
+  <span class="muted">{{ intake | length }} ticket{{ "s" if intake | length != 1 }} to start{% if jira_synced %} · synced {{ jira_synced }} UTC{% endif %} · every 5 min</span>
+  {% if jira_error %}<span class="pill red" title="{{ jira_error }}">last sync failed</span>{% endif %}
+  <span class="grow"></span>
+  <form method="post" action="/jira/sync"><input type="hidden" name="back" value="/"><button>Sync now</button></form>
+  <a class="button" href="/jira">Edit JQL</a>
+  {% else %}
+  <span><strong>Jira</strong> <span class="pill amber">not connected</span></span>
+  <span class="muted">The Intake column shows example tickets until you connect.</span>
+  <span class="grow"></span>
+  <a class="button primary" href="/jira">Connect Jira</a>
+  {% endif %}
+</div>

@@ -88,6 +88,8 @@ def task_prompt(request: StepRequest) -> str:
             request.incoming.summary,
             *(f"- Question: {q}" for q in request.incoming.questions),
         ]
+    if request.messages:
+        lines += ["", "Messages from the human running this mission (they outrank the handoff where they disagree):", *(f"- {m}" for m in request.messages)]
     lines += ["", "Do your role's work in this worktree, then finish with your structured handoff."]
     return "\n".join(lines)
 

@@ -286,6 +286,7 @@ source = { editable = "." }
 dependencies = [
     { name = "claude-agent-sdk" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "jinja2" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-sqlite" },
@@ -309,6 +310,7 @@ dev = [
 requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.2.163" },
     { name = "fastapi", specifier = ">=0.142.2" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "langgraph", specifier = ">=1.2.12" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3.1.1" },

@@ -2,16 +2,34 @@
 {% block title %}Harness · codec-swarm{% endblock %}
 {% block main %}
 <h1>Harness</h1>
-<p class="sub">What each Claude Code session loads. Edit the pack files in <code>packs/</code>; this page shows what they say.</p>
+<p class="sub">What each Claude Code session loads. The pack files in <code>packs/</code> set the defaults; changes here stay on this machine and only change the model or add capabilities, never remove them.</p>
+{% if error %}<div class="panel note bad">{{ error }}</div>{% elif saved %}<div class="panel note">Saved {{ saved }}. It applies from the next step of any mission.</div>{% endif %}
 {% for p in packs %}
 <h2>Pack {{ p.pack.name }}</h2>
 <div class="panel tablewrap">
-<table>
+<table class="harness">
   <thead><tr><th>Role</th><th>Model</th><th>Floor</th><th>MCP servers</th><th>Skills</th><th>Max turns</th></tr></thead>
   <tbody>
-  {% for role in p.pack.planning_roles + p.pack.lane_roles %}{% set r = p.roles[role] %}
-    <tr data-role="{{ role }}"><td>{{ role }}{% if r.plans_lanes %} <span class="pill aqua">plans lanes</span>{% endif %}</td><td class="mono">{{ r.model }}</td><td class="mono">{{ r.min_model }}</td>
-      <td class="mono">{{ r.mcp | join(", ") or "none" }}</td><td class="mono">{{ r.skills | join(", ") or "none" }}</td><td class="mono">{{ r.max_turns }}</td></tr>
+  {% for role in p.pack.planning_roles + p.pack.lane_roles %}{% set r = p.roles[role] %}{% set o = overrides[(p.pack.name, role)] %}
+    <tr data-role="{{ role }}" id="{{ p.pack.name }}-{{ role }}"><td>{{ role }}{% if r.plans_lanes %} <span class="pill aqua">plans lanes</span>{% endif %}</td><td class="mono">{{ r.model }}{% if o.model %} → <span class="pill amber">{{ o.model }}</span>{% endif %}</td><td class="mono">{{ r.min_model }}</td>
+      <td class="mono">{{ r.mcp | join(", ") or "none" }}{% for x in o.extra_mcp %} <span class="pill amber">+{{ x }}</span>{% endfor %}</td><td class="mono">{{ r.skills | join(", ") or "none" }}{% for x in o.extra_skills %} <span class="pill amber">+{{ x }}</span>{% endfor %}</td><td class="mono">{{ r.max_turns }}</td></tr>
+    <tr class="edit" data-edit="{{ p.pack.name }}.{{ role }}"><td colspan="6">
+      <details {{ "open" if saved == p.pack.name ~ "." ~ role }}><summary>Edit {{ role }}</summary>
+      <form method="post" action="/harness/{{ p.pack.name }}/{{ role }}" class="inline">
+        <label>Model
+          <select name="model">
+            <option value="">pack default ({{ r.model }})</option>
+            {% for mname in models %}{% set below = r.min_model and loop.index0 < models.index(r.min_model) %}<option value="{{ mname }}" {{ "selected" if o.model == mname }} {{ "disabled" if below }}>{{ mname }}{{ " (below floor)" if below }}</option>{% endfor %}
+          </select>
+        </label>
+        <fieldset><legend>Add MCP servers</legend>
+          {% for name in p.mcp_catalog if name not in r.mcp %}<label class="check"><input type="checkbox" name="extra_mcp" value="{{ name }}" {{ "checked" if name in o.extra_mcp }}> {{ name }}</label>{% else %}<span class="muted">all catalog servers already on</span>{% endfor %}
+        </fieldset>
+        <label>Add skills (comma separated) <input name="extra_skills" value="{{ o.extra_skills | join(', ') }}"></label>
+        <button class="primary">Save</button>
+      </form>
+      </details>
+    </td></tr>
   {% endfor %}
   </tbody>
 </table>

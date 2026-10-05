@@ -62,3 +62,65 @@ Feature: M4 dashboard
     When I open "/orchestration"
     Then the page shows the judge bands 0.95 and 0.80
     And the page shows the command-gate band from 0.87 to 0.93
+
+  Scenario: A harness override changes a role's model and adds an MCP server
+    Given I am signed in
+    When I set the backend-coder of codec-standard to model opus with MCP server playwright
+    Then the harness page shows backend-coder overridden to opus with +playwright
+    And a backend-coder session resolves to model opus with servers context7 and playwright
+
+  Scenario: The harness refuses a model below the role's floor
+    Given I am signed in
+    When I set the specifier of codec-standard to model haiku with no MCP server
+    Then the harness page says "specifier cannot run below sonnet"
+    And the specifier of codec-standard has no override
+
+  Scenario: Orchestration settings change the command-gate band and can turn Jev off
+    Given I am signed in
+    When I save orchestration with Jev off, threshold 0.92 and margin 0.02
+    Then the page shows the command-gate band from 0.90 to 0.94
+    And the orchestration settings say Jev is off
+
+  Scenario: A message to an agent joins its next step's prompt
+    Given I am signed in
+    And mission CODEC-1710 "Add from_cents" on codec-swarm-sandbox is waiting at its spec gate
+    When I send "Use Decimal, not float" to the backend-coder of lane codec-swarm-sandbox in CODEC-1710
+    Then the mission page of CODEC-1710 shows that message as queued
+    When I approve the spec gate of CODEC-1710 from the inbox
+    Then the backend-coder's step received "Use Decimal, not float"
+    And the mission page of CODEC-1710 shows that message as delivered
+
+  Scenario: A role that ran shows the command to attach to its session
+    Given I am signed in
+    And mission CODEC-1711 "Add from_cents" on codec-swarm-sandbox is waiting at its pr gate
+    And the backend-coder of lane codec-swarm-sandbox in CODEC-1711 ran as session "sess-123"
+    When I open the mission page of CODEC-1711
+    Then it shows "claude --resume sess-123" for the backend-coder
+
+  Scenario: Before Jira is connected the Intake column shows example tickets
+    Given I am signed in
+    When I open "/"
+    Then the Intake column shows CODEC-901 marked as an example
+    And the Jira bar offers to connect Jira
+
+  Scenario: Connecting Jira keeps the token out of the database and fetches tickets
+    Given I am signed in
+    And Jira at "https://team.atlassian.net" answers for "me@example.com" with ticket PAY-7 "Refund partial captures"
+    When I connect Jira with site "team.atlassian.net", email "me@example.com" and a token
+    Then the Intake column shows PAY-7 and no example tickets
+    And the token is in the root's .env, readable only by me, and nowhere in the database
+    And the Start mission link for PAY-7 fills in its title
+
+  Scenario: A rejected Jira token saves nothing
+    Given I am signed in
+    And Jira at "https://team.atlassian.net" rejects every token
+    When I connect Jira with site "team.atlassian.net", email "me@example.com" and a token
+    Then the Jira page says "rejected the email or API token"
+    And Jira is not connected
+
+  Scenario: My requests shows plain progress and what waits on me
+    Given I am signed in
+    And mission CODEC-1712 "Add from_cents" on codec-swarm-sandbox is waiting at its spec gate
+    When I open "/requests"
+    Then CODEC-1712 is at the step "Your OK on the spec"
+    And it says I need to approve the spec

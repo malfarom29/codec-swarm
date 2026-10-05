@@ -15,7 +15,7 @@ from langgraph.types import Command
 
 from codec_swarm.domain import Mission, Pack
 from codec_swarm.graph.build import build_graph
-from codec_swarm.plugins.api import AgentBackend, EventSink, HandoffRecorder, Judge, Publisher, Router
+from codec_swarm.plugins.api import AgentBackend, ChatInbox, EventSink, HandoffRecorder, Judge, Publisher, Router
 
 
 SQLITE_TIMEOUT_S = 30.0
@@ -49,12 +49,13 @@ class MissionRunner:
         recorder: HandoffRecorder | None = None,
         publisher: Publisher | None = None,
         part: str = "full",
+        chat: ChatInbox | None = None,
     ):
         # Checkpoints live in their own file. An async checkpoint transaction can stay open across an await,
         # and a synchronous event-log write on the same file would then block the event loop it needs: a deadlock.
         self._db_path = Path(db_path).with_suffix(".checkpoints.db")
         self._events = events
-        self._builder = build_graph(pack, backend, router, judge, events, recorder, publisher, part)
+        self._builder = build_graph(pack, backend, router, judge, events, recorder, publisher, part, chat)
 
     @asynccontextmanager
     async def _graph(self) -> AsyncIterator[CompiledStateGraph]:

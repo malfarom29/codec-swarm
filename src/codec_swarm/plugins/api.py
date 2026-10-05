@@ -15,6 +15,7 @@ class StepRequest(BaseModel, frozen=True):
     role: str
     incoming: Handoff | None = None
     model: str | None = None  # the router's pick; None keeps the role's harness default
+    messages: tuple[str, ...] = ()  # what I typed to this role from the dashboard since its last step
 
 
 class AgentEvent(BaseModel, frozen=True):
@@ -51,6 +52,12 @@ class Publisher(Protocol):
     """Pushes an approved lane and opens its PR; returns the PR URL. Must be safe to call twice."""
 
     def publish(self, mission: Mission, handoffs: list[Handoff], verdict: dict[str, Any] | None) -> str: ...
+
+
+class ChatInbox(Protocol):
+    """Messages queued for a role; taking them marks them delivered."""
+
+    def take_pending(self, ticket: str, lane: str, role: str) -> list[Any]: ...
 
 
 class EventSink(Protocol):

@@ -22,6 +22,20 @@
 {% else %}
 <div class="board">
   {% for key, label, hint in stages %}
+  {% if key == "intake" %}
+  <section class="col intake" aria-label="{{ label }}" data-col="intake">
+    <h3><span>{{ label }}</span><span>{{ intake | length }}</span></h3>
+    <p class="hint">{{ "from Jira" if jira_connected else "examples until Jira is connected" }}</p>
+    {% for t in intake %}
+    <div class="card ticket {{ 'example' if t.example }}" data-intake="{{ t.key }}">
+      <span class="id">{{ t.key }}</span> {% if t.example %}<span class="pill amber">example</span>{% endif %}{% if t.priority %} <span class="pill dim">{{ t.priority }}</span>{% endif %}
+      <div class="title">{{ t.summary }}</div>
+      <div class="meta"><span>{{ t.status }}</span>{% if t.url %}<a href="{{ t.url }}" target="_blank" rel="noopener">open in Jira</a>{% endif %}</div>
+      <a class="start" href="/missions/new?{{ {'ticket': t.key, 'title': t.summary, 'description': t.description} | urlencode }}">Start mission →</a>
+    </div>
+    {% else %}<div class="empty">Nothing to start</div>{% endfor %}
+  </section>
+  {% continue %}{% endif %}
   {% set cards_here = missions | selectattr("stage", "equalto", key) | list %}
   <section class="col" aria-label="{{ label }}">
     <h3><span>{{ label }}</span><span>{{ cards_here | length }}</span></h3>

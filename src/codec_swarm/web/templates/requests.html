@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}My requests · codec-swarm{% endblock %}
+{% block main %}
+<h1>My requests</h1>
+<p class="sub">Each thing you asked for, where it is, and anything the agents asked you.</p>
+<div hx-get="/requests" hx-trigger="sse:change" hx-select="#requests" hx-target="this" hx-swap="innerHTML">
+<div id="requests">
+{% for m, step, questions in rows %}
+<article class="panel request" data-request="{{ m.ticket }}" data-step="{{ step }}">
+  <div class="head"><h3><span class="id">{{ m.ticket }}</span> {{ m.title or "untitled" }}</h3><a href="/missions/{{ m.ticket }}">details</a></div>
+  <ol class="plain">
+    {% for label in steps %}<li class="{{ 'done' if loop.index0 < step or (m.stage == 'pr_ready' and not m.open_gates) else ('now' if loop.index0 == step else '') }}">{{ label }}</li>{% endfor %}
+  </ol>
+  {% if m.blocked %}<p class="bad">Stopped: {{ m.blocked }}</p>{% endif %}
+  {% for g in m.open_gates %}<p class="ask">Waiting for you: approve the {{ "spec" if g.kind == "spec" else ("pull request" if g.kind == "pr" else g.kind ~ " step") }}{% if g.lane %} for {{ g.lane }}{% endif %}. <a href="/inbox">Open the inbox</a></p>{% endfor %}
+  {% for lane in m.lanes.values() if lane.pr_url %}<p>Pull request for {{ lane.repo }}: <a href="{{ lane.pr_url }}" target="_blank" rel="noopener">{{ lane.pr_url }}</a></p>{% endfor %}
+  {% if questions %}<details class="questions" {{ "open" if m.stage != "pr_ready" }}><summary><strong>Questions from the agents</strong> ({{ questions | length }})</summary><ul>{% for role, q in questions %}<li><span class="muted">{{ role }}:</span> {{ q }}</li>{% endfor %}</ul></details>{% endif %}
+</article>
+{% else %}<p class="empty">You haven't asked for anything yet. <a href="/missions/new">Start a mission</a>.</p>{% endfor %}
+</div>
+</div>
+{% endblock %}

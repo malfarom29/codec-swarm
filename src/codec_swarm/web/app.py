@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import secrets
+import subprocess
+import sys
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -18,17 +21,23 @@ from sse_starlette.sse import EventSourceResponse
 
 from codec_swarm.domain import Autonomy, JudgeBands
 from codec_swarm.harness import load_pack
+from codec_swarm.harness.packs import MODEL_ORDER
 from codec_swarm.plugins.jev import MODEL as JEV_MODEL
+from codec_swarm.plugins.jira import JiraError
 from codec_swarm.plugins.registry import jev_available
 from codec_swarm.service import MissionRequest, MissionService
+from codec_swarm.store.settings import Orchestration, RoleOverride
 from codec_swarm.store.events import Event
 from codec_swarm.store.views import MissionView, mission_view
 
 HERE = Path(__file__).parent
 COOKIE = "codec_session"
-STAGES = [("spec", "Spec", "Gherkin"), ("build", "Build", "TDD"), ("review", "Review", "code and QA"), ("judge", "Judge", "Definition of Done"), ("pr_ready", "PR ready", "branch-flow"), ("blocked", "Blocked", "failed or stuck")]
+STAGES = [("intake", "Intake", "from Jira"), ("spec", "Spec", "Gherkin"), ("build", "Build", "TDD"), ("review", "Review", "code and QA"), ("judge", "Judge", "Definition of Done"), ("pr_ready", "PR ready", "branch-flow"), ("blocked", "Blocked", "failed or stuck")]
 AGENTS = [("specifier", "Specifier"), ("architect", "Architect"), ("backend-coder", "Backend coder"), ("frontend-coder", "Frontend coder"), ("coder", "Coder (Solo)"), ("reviewer", "Reviewer"), ("hardener", "Hardener"), ("qa", "QA")]
-GATE_BAND = (0.90, 0.03)  # command gate threshold and margin, as measured in spikes/jev_command_gate.py
+JIRA_SYNC_SECONDS = 300
+PACKS = ("codec-standard", "solo")
+# What I see on "My requests": plain steps instead of the engine's stages.
+REQUEST_STEPS = ["Writing the spec", "Your OK on the spec", "Building", "Checking the work", "Ready for review"]
 
 
 def _line(e: Event) -> str | None:
@@ -79,10 +88,44 @@ def _terminal_line(e: Event) -> str | None:
     return None
 
 
+def request_step(m: MissionView) -> int:
+    if m.stage == "spec":
+        return 1 if m.planning_gate else 0
+    return {"build": 2, "review": 3, "judge": 3, "pr_ready": 4}.get(m.stage, 2)
+
+
+def open_questions(events: list[Event]) -> list[tuple[str, str]]:
+    """The questions in each role's latest handoff, as (role, question)."""
+    latest: dict[tuple[str, str], list[str]] = {}
+    for e in events:
+        if e.kind == "handoff" and e.role:
+            latest[(e.payload.get("lane", ""), e.role)] = list(e.payload.get("questions") or [])
+    return [(role, q) for (_, role), qs in latest.items() for q in qs]
+
+
 def create_app(service: MissionService, token: str) -> FastAPI:
-    app = FastAPI(title="codec-swarm", docs_url=None, redoc_url=None, openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        async def sync_jira_forever() -> None:
+            while True:
+                if service.jira_connected():
+                    try:
+                        await anyio.to_thread.run_sync(service.sync_jira)
+                    except Exception as error:  # a flaky network must not stop the dashboard
+                        service.settings.put("jira.error", str(error))
+                    else:
+                        service.settings.put("jira.error", "")
+                await anyio.sleep(JIRA_SYNC_SECONDS)
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(sync_jira_forever)
+            yield
+            tasks.cancel_scope.cancel()
+
+    app = FastAPI(title="codec-swarm", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
+    templates.env.add_extension("jinja2.ext.loopcontrols")
 
     @app.middleware("http")
     async def require_token(request: Request, call_next: Callable[[Request], Awaitable[Any]]):
@@ -137,7 +180,8 @@ def create_app(service: MissionService, token: str) -> FastAPI:
 
     def render(request: Request, name: str, **context: Any) -> HTMLResponse:
         css_version = int((HERE / "static" / "codec.css").stat().st_mtime)  # a changed stylesheet is never served from cache
-        return templates.TemplateResponse(request, name, {"last_id": last_id(), "jev_on": jev_available(), "css_v": css_version, **context})
+        jev_on = jev_available() and service.settings.orchestration().jev_enabled
+        return templates.TemplateResponse(request, name, {"last_id": last_id(), "jev_on": jev_on, "css_v": css_version, **context})
 
     async def in_background(ticket: str, work: Callable[[], Awaitable[Any]]) -> None:
         try:
@@ -149,7 +193,14 @@ def create_app(service: MissionService, token: str) -> FastAPI:
 
     def board_context(view: str) -> dict[str, Any]:
         ms = missions()
-        return {"stages": STAGES, "agents": AGENTS, "missions": ms, "view": view, "kpis": kpis(ms), "cards": agent_cards(ms)}
+        return {"stages": STAGES, "agents": AGENTS, "missions": ms, "view": view, "kpis": kpis(ms), "cards": agent_cards(ms), **jira_context()}
+
+    def jira_context() -> dict[str, Any]:
+        jira = service.settings.jira()
+        return {
+            "intake": service.intake(), "jira": jira, "jira_connected": service.jira_connected(),
+            "jira_synced": (service.settings.get("jira.synced_at") or "")[11:16], "jira_error": service.settings.get("jira.error") or "",
+        }
 
     @app.get("/", response_class=HTMLResponse)
     async def board(request: Request, view: str = "stage"):
@@ -171,13 +222,32 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         events = service.events.list(ticket)
         view = mission_view(events)
         activity = [(e.created_at[11:19], line) for e in events if (line := _line(e))][-60:][::-1]
-        terminals = {repo: _terminals(events, repo) for repo in view.lanes}
-        stage_index = {key: i for i, (key, _, _) in enumerate(STAGES)}
-        return {"m": view, "activity": activity, "agent_terminals": terminals, "stages": STAGES, "stage_index": stage_index}
+        stage_index = {key: i for i, (key, _, _) in enumerate(s for s in STAGES if s[0] != "intake")}
+        chat = service.chat.list(ticket)
+        groups = []  # (lane key, heading, [(role, lines, stats, working, messages, attach command)])
+        sources = [("", "planning", view.planning_roles, view.planning_role, view.planning_role is not None)]
+        sources += [(repo, repo, lane.roles, lane.current_role, lane.status == "running") for repo, lane in view.lanes.items()]
+        try:
+            pack = load_pack(view.pack).pack if view.pack else None
+        except (FileNotFoundError, ValueError):  # a pack renamed since the mission ran
+            pack = None
+        for key, heading, stats, current, running in sources:
+            terminals = _terminals(events, key)
+            planned = (pack.planning_roles if key == "" else pack.lane_roles) if pack else []
+            roles = list(dict.fromkeys([*planned, *terminals, *([current] if current else [])]))
+            if key == "" and not roles:
+                continue
+            groups.append((key, heading, [
+                (role, terminals.get(role, []), stats.get(role), running and current == role,
+                 [c for c in chat if c.lane == key and c.role == role], service.attach_command(ticket, key, role))
+                for role in roles
+            ]))
+        stages = [s for s in STAGES if s[0] != "intake"]
+        return {"m": view, "activity": activity, "groups": groups, "stages": stages, "stage_index": stage_index}
 
     @app.get("/missions/new", response_class=HTMLResponse)
-    async def new_mission(request: Request):
-        return render(request, "new_mission.html")
+    async def new_mission(request: Request, ticket: str = "", title: str = "", description: str = ""):
+        return render(request, "new_mission.html", prefill={"ticket": ticket, "title": title, "description": description})
 
     @app.get("/missions/{ticket}", response_class=HTMLResponse)
     async def mission(request: Request, ticket: str):
@@ -190,17 +260,27 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         return render(request, "_mission.html", **mission_context(ticket))
 
     @app.get("/harness", response_class=HTMLResponse)
-    async def harness(request: Request):
-        packs = [load_pack(name) for name in ("codec-standard", "solo")]
-        return render(request, "harness.html", packs=packs)
+    async def harness(request: Request, saved: str = "", error: str = ""):
+        packs = [load_pack(name) for name in PACKS]
+        overrides = {(p.pack.name, role): service.settings.role_override(p.pack.name, role) for p in packs for role in p.roles}
+        return render(request, "harness.html", packs=packs, overrides=overrides, models=MODEL_ORDER, saved=saved, error=error)
 
     @app.get("/orchestration", response_class=HTMLResponse)
-    async def orchestration(request: Request):
-        threshold, margin = GATE_BAND
+    async def orchestration(request: Request, saved: str = "", error: str = ""):
+        o = service.settings.orchestration()
         return render(
-            request, "orchestration.html", bands=JudgeBands(), jev_model=JEV_MODEL,
-            gate_run=threshold + margin, gate_unsure=threshold - margin,
+            request, "orchestration.html", bands=JudgeBands(), jev_model=JEV_MODEL, o=o, jev_key=jev_available(),
+            gate_run=o.gate_threshold + o.gate_margin, gate_unsure=o.gate_threshold - o.gate_margin, saved=saved, error=error,
         )
+
+    @app.get("/requests", response_class=HTMLResponse)
+    async def my_requests(request: Request):
+        rows = [(m, request_step(m), open_questions(service.events.list(m.ticket))) for m in missions()]
+        return render(request, "requests.html", rows=rows, steps=REQUEST_STEPS)
+
+    @app.get("/jira", response_class=HTMLResponse)
+    async def jira_page(request: Request, error: str = "", who: str = ""):
+        return render(request, "jira.html", error=error, who=who, **jira_context())
 
     # --- actions --------------------------------------------------------------
 
@@ -223,6 +303,75 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         )
         background.add_task(in_background, request.ticket, lambda: service.start(request))
         return RedirectResponse(f"/missions/{request.ticket}", status_code=303)
+
+    @app.post("/harness/{pack}/{role}")
+    async def save_role(pack: str, role: str, model: str = Form(""), extra_mcp: list[str] = Form([]), extra_skills: str = Form("")):
+        if pack not in PACKS or role not in (definition := load_pack(pack)).roles:
+            return PlainTextResponse(f"No role {role} in pack {pack}", status_code=404)
+        spec = definition.roles[role]
+        if model and (model not in MODEL_ORDER or (spec.min_model and MODEL_ORDER.index(model) < MODEL_ORDER.index(spec.min_model))):
+            return RedirectResponse(f"/harness?{urlencode({'error': f'{role} cannot run below {spec.min_model}'})}", status_code=303)
+        unknown = [m for m in extra_mcp if m not in definition.mcp_catalog]
+        if unknown:
+            return RedirectResponse(f"/harness?{urlencode({'error': 'not in the catalog: ' + ', '.join(unknown)})}", status_code=303)
+        skills = [s.strip() for s in extra_skills.replace("\n", ",").split(",") if s.strip()]
+        override = RoleOverride(model=model or None, extra_mcp=[m for m in extra_mcp if m not in spec.mcp], extra_skills=[s for s in skills if s not in spec.skills])
+        service.settings.set_role_override(pack, role, override)
+        return RedirectResponse(f"/harness?saved={pack}.{role}#{pack}-{role}", status_code=303)
+
+    @app.post("/orchestration")
+    async def save_orchestration(jev_enabled: str = Form(""), gate_threshold: float = Form(...), gate_margin: float = Form(...)):
+        if not (0.5 <= gate_threshold <= 0.99 and 0 <= gate_margin <= 0.10 and gate_threshold + gate_margin < 1):
+            return RedirectResponse("/orchestration?error=The threshold must be 0.50–0.99, the margin 0–0.10, and together below 1.", status_code=303)
+        service.settings.set_orchestration(Orchestration(jev_enabled=bool(jev_enabled), gate_threshold=gate_threshold, gate_margin=gate_margin))
+        return RedirectResponse("/orchestration?saved=1", status_code=303)
+
+    @app.post("/missions/{ticket}/chat")
+    async def send_chat(ticket: str, role: str = Form(...), lane: str = Form(""), text: str = Form(...)):
+        if text.strip():
+            service.send_message(ticket, lane, role, text.strip())
+        return RedirectResponse(f"/missions/{ticket}?tab=agents", status_code=303)
+
+    @app.post("/missions/{ticket}/attach")
+    async def open_terminal(ticket: str, role: str = Form(...), lane: str = Form("")):
+        command = service.attach_command(ticket, lane, role)
+        if command is None:
+            return PlainTextResponse(f"{role} has no session yet", status_code=404)
+        if sys.platform != "darwin":
+            return PlainTextResponse("Open in Terminal works on macOS; copy the command instead.", status_code=501)
+        script = service.root / "attach" / f"{ticket}-{lane or 'planning'}-{role}.command"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(f"#!/bin/zsh\n{command}\n")
+        script.chmod(0o700)
+        subprocess.run(["open", "-a", "Terminal", str(script)], check=False)
+        return RedirectResponse(f"/missions/{ticket}?tab=agents", status_code=303)
+
+    @app.post("/jira/connect")
+    async def jira_connect(site: str = Form(...), email: str = Form(...), token: str = Form(...), jql: str = Form("")):
+        try:
+            who = await anyio.to_thread.run_sync(lambda: service.connect_jira(site, email, token, jql))
+        except (JiraError, ValueError) as error:
+            return RedirectResponse(f"/jira?{urlencode({'error': str(error)})}", status_code=303)
+        return RedirectResponse(f"/jira?{urlencode({'who': who})}", status_code=303)
+
+    @app.post("/jira/sync")
+    async def jira_sync(back: str = Form("/")):
+        try:
+            await anyio.to_thread.run_sync(service.sync_jira)
+            service.settings.put("jira.error", "")
+        except JiraError as error:
+            service.settings.put("jira.error", str(error))
+        return RedirectResponse(back if back.startswith("/") else "/", status_code=303)
+
+    @app.post("/jira/jql")
+    async def jira_jql(jql: str = Form(...)):
+        service.set_jql(jql)
+        return await jira_sync("/jira")
+
+    @app.post("/jira/disconnect")
+    async def jira_disconnect():
+        service.disconnect_jira()
+        return RedirectResponse("/jira", status_code=303)
 
     @app.post("/missions/{ticket}/gates")
     async def answer_gate(background: BackgroundTasks, ticket: str, lane: str = Form(""), answer: str = Form(...), back: str = Form("")):

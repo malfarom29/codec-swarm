@@ -23,6 +23,7 @@ class FakeBackend:
     calls: list[str] = field(default_factory=list)
     requests: list[tuple[str, Handoff | None]] = field(default_factory=list)  # (role, incoming handoff)
     missions: list[Mission] = field(default_factory=list)  # the mission each step saw
+    messages: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)  # (role, chat messages delivered to it)
     _sent_back: set[str] = field(default_factory=set)
 
     async def run_step(self, request: StepRequest) -> AsyncIterator[AgentEvent]:
@@ -30,6 +31,7 @@ class FakeBackend:
         self.calls.append(role)
         self.requests.append((role, request.incoming))
         self.missions.append(request.mission)
+        self.messages.append((role, request.messages))
         if role == self.crash_on and (self.crash_in_repo is None or request.mission.repo == self.crash_in_repo):
             raise BackendCrash(f"backend crashed while {role} worked on {request.mission.ticket}")
         send_back = role in self.send_back_once and role not in self._sent_back

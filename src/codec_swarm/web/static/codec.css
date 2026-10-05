@@ -122,3 +122,35 @@ th { font-family: var(--mono); font-size: 11.5px; color: var(--green); font-weig
 .verdictbox { border-left: 1px solid var(--line); padding-left: 16px; }
 .score { font: 700 40px var(--mono); color: var(--freq); line-height: 1.1; margin-bottom: 6px; }
 @media (max-width: 760px) { .lanerow, .dod { grid-template-columns: 1fr; } .verdictbox { border-left: 0; padding-left: 0; } }
+.board { grid-template-columns: repeat(7, minmax(180px, 1fr)); }
+.col.intake { border-style: dashed; }
+.card.ticket.example { opacity: .85; }
+.card .start { display: inline-block; margin-top: 6px; font-size: 12.5px; }
+.jirabar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; }
+.jirabar form { margin: 0; }
+.grow { flex: 1; }
+.button.primary { background: var(--green); color: var(--bg); border-color: var(--green); }
+a.button:hover { text-decoration: none; border-color: var(--green); }
+.note { border-color: var(--dim); }
+.note.bad, .bad { color: var(--red); }
+.note.bad { border-color: rgba(255, 59, 59, .4); }
+form.inline { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; padding: 8px 0; }
+fieldset { border: 1px solid var(--line); border-radius: 5px; padding: 4px 10px 6px; display: flex; gap: 12px; flex-wrap: wrap; }
+legend { color: var(--muted); font-size: 12.5px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+tr.edit td { border-bottom: 1px solid var(--line); padding-top: 0; }
+.settings { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+.chat { display: flex; gap: 8px; margin-top: 8px; }
+.chat input { flex: 1; min-width: 0; }
+.chatlog { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12.5px; display: grid; gap: 4px; }
+.attach { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.attach code { flex: 1 1 240px; min-width: 0; overflow-x: auto; white-space: nowrap; background: #060a08; padding: 5px 8px; border-radius: 4px; }
+.attach form { margin: 0; }
+.request h3 { font-family: var(--mono); font-size: 14px; margin: 0; }
+ol.plain { list-style: none; display: flex; gap: 0; padding: 0; margin: 12px 0; flex-wrap: wrap; }
+ol.plain li { font-size: 13px; color: var(--faint); padding: 4px 12px 4px 0; }
+ol.plain li::before { content: "○ "; }
+ol.plain li.done { color: var(--green); } ol.plain li.done::before { content: "● "; }
+ol.plain li.now { color: var(--freq); font-weight: 600; } ol.plain li.now::before { content: "◉ "; }
+.ask { color: var(--amber); }
+.questions ul { margin: 4px 0 0; padding-left: 18px; }

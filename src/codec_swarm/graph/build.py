@@ -13,7 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from codec_swarm.domain import Autonomy, Band, GateKind, Handoff, JudgeBands, Mission, Pack
-from codec_swarm.plugins.api import AgentBackend, EventSink, HandoffRecorder, Judge, Publisher, Router, StepRequest
+from codec_swarm.plugins.api import AgentBackend, ChatInbox, EventSink, HandoffRecorder, Judge, Publisher, Router, StepRequest
 
 APPROVE = "approve"
 SEND_BACK = "send_back"
@@ -57,6 +57,7 @@ def build_graph(
     recorder: HandoffRecorder | None = None,
     publisher: Publisher | None = None,
     part: str = "full",  # full: one lane end to end | planning: up to the spec gate | lane: one repo's lane
+    chat: ChatInbox | None = None,
 ) -> StateGraph:
     with_planning, with_lane = part in ("full", "planning"), part in ("full", "lane")
     graph = StateGraph(MissionState)
@@ -70,7 +71,10 @@ def build_graph(
             if pick.next:
                 emit.append(mission, "decision", {"slot": "model", **pick.model_dump()}, role=role)
             handoff: Handoff | None = None
-            request = StepRequest(mission=mission, role=role, incoming=incoming, model=pick.next or None)
+            messages = tuple(m.text for m in chat.take_pending(mission.ticket, mission.repo, role)) if chat else ()
+            if messages:
+                emit.append(mission, "chat.delivered", {"count": len(messages)}, role=role)
+            request = StepRequest(mission=mission, role=role, incoming=incoming, model=pick.next or None, messages=messages)
             async for event in backend.run_step(request):
                 emit.append(mission, event.kind, event.payload, role=role)
                 if event.kind == "handoff":
