@@ -40,6 +40,10 @@ class Workspace:
         self.repos = root / "repos"
         self.worktrees = root / "worktrees"
 
+    def mission_dir(self, ticket: str) -> Path:
+        """Holds every lane worktree of a mission; planning roles work here so they can write each repo's spec."""
+        return self.worktrees / ticket
+
     def clone(self, origin: str, name: str) -> Path:
         """Clone once, then fetch before each mission."""
         path = self.repos / name
@@ -124,12 +128,18 @@ def render_handoff(ticket: str, handoff: Handoff, to_role: str, unlisted: list[s
     return "\n".join(lines)
 
 
-class WorkspaceRecorder:
-    """HandoffRecorder that commits each handoff in its mission's lane worktree."""
+LaneKey = tuple[str, str]  # (ticket, repo)
 
-    def __init__(self, workspace: Workspace, lanes: dict[str, Lane]) -> None:
+
+class WorkspaceRecorder:
+    """HandoffRecorder that commits each handoff in its lane's worktree; planning handoffs go to every lane."""
+
+    def __init__(self, workspace: Workspace, lanes: dict[LaneKey, Lane]) -> None:
         self._workspace = workspace
-        self._lanes = lanes  # ticket -> lane; one lane per mission until M3
+        self._lanes = lanes
 
     def record(self, mission: Mission, step: int, handoff: Handoff, to_role: str) -> str | None:
-        return self._workspace.record_handoff(self._lanes[mission.ticket], step, handoff, to_role)
+        if mission.repo:
+            return self._workspace.record_handoff(self._lanes[(mission.ticket, mission.repo)], step, handoff, to_role)
+        shas = [self._workspace.record_handoff(lane, step, handoff, to_role) for (t, _), lane in self._lanes.items() if t == mission.ticket]
+        return shas[0] if shas else None

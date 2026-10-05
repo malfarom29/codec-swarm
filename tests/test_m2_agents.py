@@ -286,7 +286,7 @@ class FakeGh:
 @when("the publisher opens the lane's PR")
 def publishes(world):
     world["gh"] = FakeGh()
-    world["publisher"] = GitHubPublisher({"CODEC-1423": world["lane"]}, run=world["gh"])
+    world["publisher"] = GitHubPublisher({("CODEC-1423", "codec-payment"): world["lane"]}, run=world["gh"])
     world["mission"] = Mission(ticket="CODEC-1423", repo="codec-payment", title="Partial refunds")
     handoffs = [Handoff(from_role="backend-coder", summary="Added POST /refunds.")]
     world["pr_url"] = world["publisher"].publish(world["mission"], handoffs, {"source": "checks-only", "band": "review", "rationale": "unit: pass"})

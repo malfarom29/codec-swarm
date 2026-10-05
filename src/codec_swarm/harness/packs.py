@@ -19,6 +19,7 @@ MODEL_ORDER = ("haiku", "sonnet", "opus")
 class RoleSpec(BaseModel, frozen=True):
     model: str = "sonnet"
     min_model: str = "haiku"  # floor for Jev's model routing
+    plans_lanes: bool = False  # this role's handoff includes the lane order
     mcp: tuple[str, ...] = ()
     skills: tuple[str, ...] = ()
     max_turns: int = 40

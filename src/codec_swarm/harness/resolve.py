@@ -39,6 +39,7 @@ class SessionSpec(BaseModel, frozen=True):
     cwd: Path
     model: str
     model_forced: bool = False  # a local override beats the router's pick
+    plans_lanes: bool = False  # the handoff schema asks for the lane order
     system_prompt: str
     mcp_servers: dict[str, dict[str, Any]]  # secrets still as ${env:NAME}
     skills: tuple[str, ...]
@@ -70,6 +71,20 @@ def mission_layer(mission: Mission, scenarios: str | None = None) -> str:
     lines = ["# Layer 5 · Mission", f"Ticket {mission.ticket} on {mission.repo}: {mission.title or 'untitled'}."]
     if mission.description:
         lines += ["", mission.description.strip()]
+    if not mission.repo and mission.repos:
+        lines += [
+            "",
+            f"This mission spans {len(mission.repos)} repos: {', '.join(mission.repos)}.",
+            "Your working directory holds one folder per repo, each that repo's lane worktree.",
+            "Write each repo's scenarios to <repo>/.swarm/spec/<name>.feature.",
+        ]
+    for up in mission.upstream:
+        lines += [
+            "",
+            f"This lane depends on the {up.repo} lane. Its work is on branch {up.branch}, pushed to origin but not merged.",
+            f"While you work, point this repo's dependency on {up.repo} at that branch (for a uv project, the branch in",
+            f"[tool.uv.sources]) and say so in your handoff, so a human repoints it once the {up.repo} PR is merged.",
+        ]
     if scenarios:
         lines += ["", "Approved scenarios:", "", scenarios.strip()]
     return "\n".join(lines)
@@ -106,6 +121,7 @@ def resolve_session(
         cwd=worktree,
         model=overrides.model or spec.model,
         model_forced=overrides.model is not None,
+        plans_lanes=spec.plans_lanes,
         system_prompt=LAYER_SEPARATOR.join(layer for layer in layers if layer),
         mcp_servers={name: pack.mcp_catalog[name] for name in mcp_names},
         skills=_unique(spec.skills, role_extras.extra_skills if role_extras else (), extras.skills),

@@ -1,4 +1,4 @@
-"""codec-swarm command line. M2: run one mission against one repo from the terminal."""
+"""codec-swarm command line: run a mission over one or more repos, and report on missions."""
 
 from __future__ import annotations
 
@@ -11,9 +11,11 @@ import anyio
 from dotenv import load_dotenv
 
 from codec_swarm.domain import Autonomy, Mission, choose_pack_rule
-from codec_swarm.graph import APPROVE, SEND_BACK, MissionRunner, RunResult
+from codec_swarm.graph import APPROVE, SEND_BACK, MissionRunner
+from codec_swarm.graph.coordinator import MissionCoordinator
 from codec_swarm.harness import LocalOverrides, load_pack, load_repo_config, resolve_session
 from codec_swarm.plugins.claude_code import ClaudeCodeBackend
+from codec_swarm.plugins.gate import PerRepoGate
 from codec_swarm.plugins.jev import JevClient, LaneUnderJudgement
 from codec_swarm.plugins.jev.packs import choose_pack_jev
 from codec_swarm.plugins.registry import build_plugins
@@ -52,10 +54,10 @@ def _print_events(events: EventLog, ticket: str, since: int) -> int:
     return since
 
 
-def _ask(result: RunResult, auto_approve: bool) -> str | None:
-    """The gate's answer, or None to leave the mission waiting at the gate."""
-    gate = result.gate or {}
-    label = f"{gate.get('kind')} gate" + (f" after {gate['after']}" if gate.get("after") else "")
+def _ask(lane: str | None, gate: dict, auto_approve: bool) -> str | None:
+    """The gate's answer, or None to leave it waiting for a human."""
+    where = f"lane {lane}" if lane else "mission"
+    label = f"{where}: {gate.get('kind')} gate" + (f" after {gate['after']}" if gate.get("after") else "")
     failed = (gate.get("verdict") or {}).get("failed_checks")
     if auto_approve and failed:
         print(f"→ {label}: not approved, failed checks: {', '.join(failed)}. Waiting for a human.")
@@ -75,64 +77,85 @@ async def run_mission(args: argparse.Namespace) -> int:
     root = Path(args.root).expanduser()
     root.mkdir(parents=True, exist_ok=True)
     workspace = Workspace(root)
-    repo = _repo_name(args.repo_url)
-    clone = workspace.clone(args.repo_url, repo)
-    config = load_repo_config(clone, load_pack("codec-standard"))
-    mission = Mission(ticket=args.ticket, repo=repo, title=args.title, description=args.description, autonomy=Autonomy(args.autonomy), bands=config.judge)
+    standard = load_pack("codec-standard")
+    repos = [(url, _repo_name(url)) for url in args.repo_url]
+    configs = {name: load_repo_config(workspace.clone(url, name), standard) for url, name in repos}
+    primary = configs[repos[0][1]]
+    names = tuple(name for _, name in repos)
+    mission = Mission(
+        ticket=args.ticket, repo="", repos=names, title=args.title, description=args.description,
+        autonomy=Autonomy(args.autonomy), bands=primary.judge,
+    )
+    sensitive = any(c.sensitive for c in configs.values())
     jev = JevClient()
     if args.pack == "auto":
         if args.no_jev or not jev_on():
-            choice = choose_pack_rule(bool(mission.description.strip()), 1, config.sensitive)
+            choice = choose_pack_rule(bool(mission.description.strip()), len(names), sensitive)
         else:
-            choice = await choose_pack_jev(jev, mission, 1, config.sensitive)
+            choice = await choose_pack_jev(jev, mission, len(names), sensitive)
         print(f"pack {choice.next} ({choice.source}: {choice.rationale})")
         pack_name = choice.next
     else:
         pack_name = args.pack
     pack = load_pack(pack_name)
-    lane = workspace.prepare_lane(args.repo_url, repo, args.ticket, args.title, config.branch_flow)
-    print(f"lane {lane.ticket} · {lane.repo} · {lane.branch}\n  {lane.path}")
+    lanes = {
+        (args.ticket, name): workspace.prepare_lane(url, name, args.ticket, args.title, configs[name].branch_flow) for url, name in repos
+    }
+    for lane in lanes.values():
+        print(f"lane {lane.repo} · {lane.branch}\n  {lane.path}")
 
     db = root / "swarm.db"
-    events, sessions = EventLog(db), SessionStore(db)
+    events, sessions, cache = EventLog(db), SessionStore(db), GateCache(db)
     overrides = LocalOverrides(model=args.model)
-    judged = LaneUnderJudgement(worktree=lane.path, base=lane.base, checks=config.checks)
-    plugins = build_plugins(pack, config, lambda m: judged, GateCache(db), use_jev=not args.no_jev, ask=None if args.no_jev else jev)
+    judged = {
+        name: LaneUnderJudgement(worktree=lanes[(args.ticket, name)].path, base=lanes[(args.ticket, name)].base, checks=configs[name].checks)
+        for name in names
+    }
+    use_jev, ask = not args.no_jev, None if args.no_jev else jev
+    plugins = build_plugins(pack, primary, lambda m: judged[m.repo], cache, use_jev=use_jev, ask=ask)
+    gate = PerRepoGate({name: build_plugins(pack, configs[name], lambda m: judged[m.repo], cache, use_jev, ask).gate for name in names}, plugins.gate)
     print(f"  Jev {'on: routing, command gate and judge' if plugins.jev else 'off: fixed rules, allowlist and checks-only judge'}")
-    backend = ClaudeCodeBackend(
-        lambda m, role: resolve_session(pack, config, role, lane.path, m, overrides=overrides),
-        plugins.gate,
-        sessions,
-    )
-    lanes = {lane.ticket: lane}
-    runner = MissionRunner(
-        db,
-        pack.pack,
-        backend,
-        plugins.router,
-        plugins.judge,
-        events,
-        recorder=WorkspaceRecorder(workspace, lanes),
-        publisher=GitHubPublisher(lanes),
-    )
 
+    def session_for(m: Mission, role: str):
+        if m.repo:  # a lane role works in its repo's worktree
+            return resolve_session(pack, configs[m.repo], role, lanes[(m.ticket, m.repo)].path, m, overrides=overrides)
+        return resolve_session(pack, primary, role, workspace.mission_dir(m.ticket), m, overrides=overrides)
+
+    backend = ClaudeCodeBackend(session_for, gate, sessions)
+    recorder, publisher = WorkspaceRecorder(workspace, lanes), GitHubPublisher(lanes)
+
+    def runner(part: str) -> MissionRunner:
+        return MissionRunner(db, pack.pack, backend, plugins.router, plugins.judge, events, recorder=recorder, publisher=publisher, part=part)
+
+    coordinator = MissionCoordinator(runner("planning"), runner("lane"), events, pusher=publisher)
     seen = max((e.id for e in events.list(args.ticket)), default=0)
-    labels = {"pack": pack_name, "jev": plugins.jev}
-    result = await (runner.recover(args.ticket) if args.recover else runner.start(mission, labels))
+    labels = {"pack": pack_name, "jev": plugins.jev, "repos": list(names)}
+    result = await (coordinator.recover(args.ticket) if args.recover else coordinator.start(mission, labels))
     seen = _print_events(events, args.ticket, seen)
-    while result.status == "waiting":
-        answer = _ask(result, args.yes)
-        if answer is None:
+    while not result.blocked and (waiting := result.waiting()):
+        answered = False
+        for lane, gate_info in waiting:
+            answer = _ask(lane, gate_info, args.yes)
+            if answer is None:
+                continue
+            result = await coordinator.answer(args.ticket, lane, answer)
+            seen = _print_events(events, args.ticket, seen)
+            answered = True
+            break  # the mission changed: re-read which gates are open
+        if not answered:
             break
-        result = await runner.answer(args.ticket, answer)
-        seen = _print_events(events, args.ticket, seen)
     await jev.aclose()
     tokens = sum((c.get("input_tokens") or 0) + (c.get("output_tokens") or 0) for c in jev.calls)
     events.append(args.ticket, "jev.usage", {"calls": len(jev.calls), "tokens": tokens})
     if jev.calls:
         print(f"  Jev: {len(jev.calls)} calls · {tokens} tokens")
-    print(f"\n{args.ticket}: {result.status}" + (f" · {result.pr_url}" if result.pr_url else ""))
-    return 0 if result.status == "pr_ready" else 1
+    if result.blocked:
+        print(f"\n{args.ticket}: blocked · {result.blocked}")
+        return 1
+    print()
+    for repo, lane in result.lanes.items():
+        print(f"{args.ticket} · {repo}: {lane.status}" + (f" · {lane.pr_url}" if lane.pr_url else ""))
+    return 0 if result.done else 1
 
 
 def jev_on() -> bool:
@@ -170,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="codec-swarm")
     sub = parser.add_subparsers(dest="command", required=True)
     m = sub.add_parser("mission", help="run one mission on one repo, from the first role to its PR")
-    m.add_argument("--repo-url", required=True)
+    m.add_argument("--repo-url", required=True, action="append", help="repeat for a mission that spans several repos")
     m.add_argument("--ticket", required=True)
     m.add_argument("--title", required=True)
     m.add_argument("--description", default="")

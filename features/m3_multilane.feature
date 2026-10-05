@@ -17,6 +17,15 @@ Feature: M3 multi-lane missions
     And lane codec-web waits at the pr gate
     And lane codec-web started after lane codec-api reached the judge
 
+  Scenario: A dependent lane is told where its upstream lane's pushed branch is
+    Given a gated mission for CODEC-1606 on codec-api and codec-web
+    And the architect orders codec-web after codec-api
+    When the mission runs
+    And I approve the spec gate
+    Then codec-api's branch was pushed before lane codec-web started
+    And every step of lane codec-web knew codec-api's pushed branch
+    And lane codec-api's steps were told of no upstream lane
+
   Scenario: Independent lanes start together after the spec gate
     Given a gated mission for CODEC-1601 on codec-api and codec-web
     And the architect gives no lane order

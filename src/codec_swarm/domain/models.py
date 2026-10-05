@@ -57,10 +57,18 @@ CODEC_STANDARD = Pack(
 )
 
 
+class UpstreamLane(BaseModel, frozen=True):
+    """A lane this lane depends on, and the branch the orchestrator pushed once it reached the judge."""
+
+    repo: str
+    branch: str
+
+
 class Mission(BaseModel, frozen=True):
     ticket: str
     repo: str  # this lane's repo; "" while planning a mission that spans several repos
     repos: tuple[str, ...] = ()  # every repo in the mission, in the order given
+    upstream: tuple[UpstreamLane, ...] = ()  # lanes this lane codes against, with their pushed branches
     title: str = ""
     description: str = ""
     autonomy: Autonomy = Autonomy.GATED

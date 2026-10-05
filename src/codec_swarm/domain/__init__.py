@@ -12,6 +12,7 @@ from codec_swarm.domain.models import (
     Mission,
     Pack,
     ScenarioResult,
+    UpstreamLane,
     Verdict,
 )
 
@@ -32,5 +33,6 @@ __all__ = [
     "Mission",
     "Pack",
     "ScenarioResult",
+    "UpstreamLane",
     "Verdict",
 ]

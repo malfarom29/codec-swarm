@@ -32,6 +32,9 @@ def pr_body(mission: Mission, handoffs: list[Handoff], verdict: dict | None, lan
     lines += [f"- **{h.from_role}**{' (sent back)' if h.send_back else ''}: {h.summary.splitlines()[0] if h.summary else ''}" for h in handoffs]
     if verdict:
         lines += ["", "## Judge", "", f"Source: {verdict.get('source')} · band: {verdict.get('band')}", "", "```", verdict.get("rationale", ""), "```"]
+    if mission.upstream:
+        lines += ["", "## Depends on", "", "Merge these first, then point this repo's dependency back at their base branch:", ""]
+        lines += [f"- `{up.repo}` on branch `{up.branch}`" for up in mission.upstream]
     unlisted = files_no_handoff_listed(lane, handoffs) if lane else []
     if unlisted:
         lines += ["", "## Files no handoff listed", "", "Check these before merging; they may be scratch files:", "", *[f"- `{p}`" for p in unlisted]]
@@ -40,13 +43,19 @@ def pr_body(mission: Mission, handoffs: list[Handoff], verdict: dict | None, lan
 
 
 class GitHubPublisher:
-    def __init__(self, lanes: dict[str, Lane], run: Runner = run_command) -> None:
+    def __init__(self, lanes: dict[tuple[str, str], Lane], run: Runner = run_command) -> None:
         self._lanes = lanes
         self._run = run
 
+    def push_branch(self, ticket: str, repo: str) -> str:
+        """Push a judged lane's branch so dependent lanes can use it; the PR opens later as usual."""
+        lane = self._lanes[(ticket, repo)]
+        git(lane.path, "push", "--quiet", "-u", "origin", lane.branch)
+        return lane.branch
+
     def publish(self, mission: Mission, handoffs: list[Handoff], verdict: dict | None) -> str:
         """Idempotent: re-running after a crash pushes again and returns the PR that already exists."""
-        lane = self._lanes[mission.ticket]
+        lane = self._lanes[(mission.ticket, mission.repo)]
         cwd = str(lane.path)
         git(lane.path, "push", "--quiet", "-u", "origin", lane.branch)
         existing = self._run(["gh", "pr", "list", "--head", lane.branch, "--json", "url", "--jq", ".[0].url"], cwd)

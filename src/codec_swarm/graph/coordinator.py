@@ -11,7 +11,9 @@ from typing import Any
 
 import anyio
 
-from codec_swarm.domain import Handoff, LaneCycle, LaneOrder, Mission, lane_dependencies
+from typing import Protocol
+
+from codec_swarm.domain import Handoff, LaneCycle, LaneOrder, Mission, UpstreamLane, lane_dependencies
 from codec_swarm.graph.runner import MissionRunner, RunResult
 from codec_swarm.plugins.api import EventSink
 
@@ -62,11 +64,18 @@ def _lane_order(handoffs: list[dict[str, Any]]) -> tuple[LaneOrder, ...]:
     return ()
 
 
+class BranchPusher(Protocol):
+    """Pushes a judged lane's branch so the lanes that depend on it can code against it; returns the branch."""
+
+    def push_branch(self, ticket: str, repo: str) -> str: ...
+
+
 class MissionCoordinator:
-    def __init__(self, planning: MissionRunner, lanes: MissionRunner, events: EventSink) -> None:
+    def __init__(self, planning: MissionRunner, lanes: MissionRunner, events: EventSink, pusher: BranchPusher | None = None) -> None:
         self._planning = planning
         self._lanes = lanes
         self._events = events
+        self._pusher = pusher
 
     async def start(self, mission: Mission, labels: dict[str, Any] | None = None) -> MissionResult:
         repos = mission.repos or (mission.repo,)
@@ -82,6 +91,20 @@ class MissionCoordinator:
             result = await self._planning.status(ticket)
         return await self._advance(Mission.model_validate(result.mission), result)
 
+    async def recover(self, ticket: str) -> MissionResult:
+        """Continue planning and every lane that stopped mid-step, then start whatever is now ready."""
+        planning = await self._planning.status(ticket)
+        if planning is None:
+            raise RuntimeError(f"{ticket} has no mission to recover")
+        if planning.status == "failed":
+            planning = await self._planning.recover(ticket)
+        plan = Mission.model_validate(planning.mission)
+        for repo in plan.repos:
+            lane = await self._lanes.status(lane_thread(ticket, repo))
+            if lane is not None and lane.status == "failed":
+                await self._lanes.recover(lane_thread(ticket, repo))
+        return await self._advance(plan, planning)
+
     async def _advance(self, plan: Mission, planning: RunResult) -> MissionResult:
         if planning.status != "planned":
             return MissionResult(planning=planning, lanes={r: LaneResult(r, NOT_STARTED) for r in plan.repos})
@@ -96,10 +119,12 @@ class MissionCoordinator:
             if not ready:
                 break
             started: dict[str, LaneResult] = {}
+            branches = self._push({d for r in ready for d in deps[r]}, plan.ticket)
 
             async def run(repo: str) -> None:
                 self._events.append(plan.ticket, "lane.started", {"lane": repo, "after": sorted(deps[repo])})
-                lane = plan.model_copy(update={"repo": repo})
+                upstream = tuple(UpstreamLane(repo=d, branch=branches[d]) for d in sorted(deps[repo]) if d in branches)
+                lane = plan.model_copy(update={"repo": repo, "upstream": upstream})
                 try:
                     result = await self._lanes.start(lane, thread=lane_thread(plan.ticket, repo))
                     started[repo] = self._lane(repo, result)
@@ -112,6 +137,16 @@ class MissionCoordinator:
                     group.start_soon(run, repo)
             lanes.update(started)
         return MissionResult(planning=planning, lanes=lanes)
+
+    def _push(self, repos: set[str], ticket: str) -> dict[str, str]:
+        """Push each upstream lane's branch before its dependents start; pushing again is harmless."""
+        if self._pusher is None:
+            return {}
+        branches = {}
+        for repo in sorted(repos):
+            branches[repo] = self._pusher.push_branch(ticket, repo)
+            self._events.append(ticket, "lane.pushed", {"lane": repo, "branch": branches[repo]})
+        return branches
 
     async def _status(self, ticket: str, repo: str) -> LaneResult:
         result = await self._lanes.status(lane_thread(ticket, repo))

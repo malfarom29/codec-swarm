@@ -133,6 +133,17 @@ def hard_rules(tool: str, tool_input: dict[str, Any], ctx: GateContext) -> GateD
     return None
 
 
+class PerRepoGate:
+    """Routes each decision to its repo's gate (each repo has its own allowlist); planning uses the default."""
+
+    def __init__(self, gates: dict[str, Any], default: Any) -> None:
+        self._gates = gates
+        self._default = default
+
+    def decide(self, tool: str, tool_input: dict[str, Any], ctx: GateContext) -> Any:
+        return self._gates.get(ctx.repo, self._default).decide(tool, tool_input, ctx)
+
+
 class AllowlistGate:
     """Fallback CommandGate: only allowlisted commands run without asking, and never in Manual mode."""
 

@@ -35,6 +35,7 @@ roles:
   architect:
     model: opus
     min_model: sonnet
+    plans_lanes: true
     mcp: [context7]
     skills: [code-review]
     max_turns: 30

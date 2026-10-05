@@ -37,11 +37,24 @@ def crash_in_repo(world, role, repo):
     world["backend"].crash_in_repo = repo
 
 
+class FakePusher:
+    """Stands in for pushing a judged lane's branch; records the order of pushes."""
+
+    def __init__(self, events):
+        self.events = events
+        self.pushed: list[str] = []
+
+    def push_branch(self, ticket, repo):
+        self.pushed.append(repo)
+        return f"feature/{ticket}-{repo}"
+
+
 def _coordinator(world):
     def runner(part):
         return MissionRunner(world["db"], world["pack"], world["backend"], PackOrderRouter(), world["judge"], world["events"], part=part)
 
-    return MissionCoordinator(runner("planning"), runner("lane"), world["events"])
+    world["pusher"] = FakePusher(world["events"])
+    return MissionCoordinator(runner("planning"), runner("lane"), world["events"], pusher=world["pusher"])
 
 
 @when("the mission runs")
@@ -108,6 +121,25 @@ def started_after(world, later, earlier):
     verdicts = [e.id for e in world["events"].list(world["mission"].ticket) if e.kind == "verdict"]
     assert _event_ids(world, "lane.started", later)[0] > min(verdicts)
     assert _event_ids(world, "lane.started", earlier)[0] < min(verdicts)
+
+
+@then(parsers.parse("{upstream}'s branch was pushed before lane {later} started"))
+def pushed_before(world, upstream, later):
+    assert world["pusher"].pushed == [upstream]
+    pushed = _event_ids(world, "lane.pushed", upstream)
+    assert pushed and pushed[0] < _event_ids(world, "lane.started", later)[0]
+
+
+@then(parsers.parse("every step of lane {lane} knew {upstream}'s pushed branch"))
+def knew_upstream(world, lane, upstream):
+    steps = [r for r in world["backend"].missions if r.repo == lane]
+    assert steps and all(u.repo == upstream and u.branch == f"feature/{world['mission'].ticket}-{upstream}" for r in steps for u in r.upstream)
+    assert all(len(r.upstream) == 1 for r in steps)
+
+
+@then(parsers.parse("lane {lane}'s steps were told of no upstream lane"))
+def no_upstream(world, lane):
+    assert all(not r.upstream for r in world["backend"].missions if r.repo == lane)
 
 
 @then("both lanes started right after the spec gate")

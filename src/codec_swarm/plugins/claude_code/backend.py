@@ -41,6 +41,28 @@ HANDOFF_SCHEMA: dict[str, Any] = {
     "required": ["summary", "send_back", "commit_message", "files_touched", "questions"],
     "additionalProperties": False,
 }
+LANE_ORDER_FIELD: dict[str, Any] = {
+    "type": "array",
+    "description": "Every repo in the mission, with the repos whose lanes must reach the judge before it starts (an API before its clients).",
+    "items": {
+        "type": "object",
+        "properties": {"repo": {"type": "string"}, "after": {"type": "array", "items": {"type": "string"}}},
+        "required": ["repo", "after"],
+        "additionalProperties": False,
+    },
+}
+
+
+def handoff_schema(plans_lanes: bool) -> dict[str, Any]:
+    if not plans_lanes:
+        return HANDOFF_SCHEMA
+    return {
+        **HANDOFF_SCHEMA,
+        "properties": {**HANDOFF_SCHEMA["properties"], "lane_order": LANE_ORDER_FIELD},
+        "required": [*HANDOFF_SCHEMA["required"], "lane_order"],
+    }
+
+
 MAX_EVENT_TEXT = 2000
 HANDOFF_RETRY_PROMPT = "You ended your step without your structured handoff. Reply now with only your structured handoff for this step."
 
@@ -115,7 +137,7 @@ class ClaudeCodeBackend:
             can_use_tool=can_use_tool,
             hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[pre_tool_use])]},
             max_turns=spec.max_turns,
-            output_format={"type": "json_schema", "schema": HANDOFF_SCHEMA},
+            output_format={"type": "json_schema", "schema": handoff_schema(spec.plans_lanes)},
         )
 
     async def run_step(self, request: StepRequest) -> AsyncIterator[AgentEvent]:
@@ -157,7 +179,8 @@ class ClaudeCodeBackend:
             payload={"session_id": result.session_id, "turns": turns, "cost_usd": cost, "usage": result.usage},
         )
         if isinstance(result.structured_output, dict):
-            handoff = Handoff(from_role=spec.role, **{k: result.structured_output[k] for k in HANDOFF_SCHEMA["required"]})
+            fields = {k: result.structured_output[k] for k in HANDOFF_SCHEMA["required"]}
+            handoff = Handoff(from_role=spec.role, **fields, lane_order=tuple(result.structured_output.get("lane_order") or ()))
         else:
             # Still no handoff after the retry: hand the lane to a human instead of crashing the mission.
             handoff = Handoff(
