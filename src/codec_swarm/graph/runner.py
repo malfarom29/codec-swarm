@@ -87,7 +87,8 @@ class MissionRunner:
                 raise RuntimeError(f"{thread} is not waiting at a gate")
             gate = snapshot.interrupts[0].value
             ticket = snapshot.values["mission"]["ticket"]
-            self._events.append(ticket, "gate.resolved", {"kind": gate["kind"], "lane": gate.get("lane"), "answer": answer})
+            lane = snapshot.values["mission"]["repo"]
+            self._events.append(ticket, "gate.resolved", {"kind": gate["kind"], "lane": lane, "answer": answer})
             return await self._advance(graph, thread, Command(resume=answer))
 
     async def recover(self, thread: str) -> RunResult:

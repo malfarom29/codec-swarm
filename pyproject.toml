@@ -9,12 +9,17 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "claude-agent-sdk>=0.2.163",
+    "fastapi>=0.142.2",
+    "jinja2>=3.1.6",
     "langgraph>=1.2.12",
     "langgraph-checkpoint-sqlite>=3.1.1",
     "pydantic>=2.13.5",
     "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
+    "sse-starlette>=3.5.0",
     "typesafe-sdk>=0.7.2",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]

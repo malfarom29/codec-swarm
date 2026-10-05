@@ -236,6 +236,36 @@ def judge_with_junit(world, total, failing):
     world["judge"] = JevJudge(world["jev"], lambda m: lane)
 
 
+@given("a lane whose base branch already has an earlier mission's spec file")
+def lane_with_old_spec(world):
+    import subprocess
+
+    def git(cwd, *args):
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+    seed = world["tmp"] / "seed"
+    (seed / ".swarm" / "spec").mkdir(parents=True)
+    (seed / ".swarm" / "spec" / "old.feature").write_text("Feature: Old\n\n  Scenario: From an earlier mission\n    Then it was merged\n")
+    git(seed, "init", "-q", "-b", "develop")
+    git(seed, "add", ".")
+    git(seed, "-c", "user.name=t", "-c", "user.email=t@l", "commit", "-qm", "old mission")
+    git(world["tmp"], "clone", "-q", str(seed), "lane")
+    world["lane_path"] = world["tmp"] / "lane"
+
+
+@given(parsers.parse("the lane adds its own spec file with {count:d} scenarios"))
+def lane_adds_spec(world, count):
+    body = "\n".join(f"  Scenario: Split case {i}\n    Then it splits\n" for i in range(count))
+    (world["lane_path"] / ".swarm" / "spec" / "split.feature").write_text(f"Feature: Split\n\n{body}")
+
+
+@given("the Jev judge for that lane with passing checks")
+def judge_for_lane(world):
+    checks = (Check(id="unit", run="python3 -c 'raise SystemExit(0)'"),)
+    lane = LaneUnderJudgement(worktree=world["lane_path"], base="develop", checks=checks)
+    world["judge"] = JevJudge(world["jev"], lambda m: lane)
+
+
 @then(parsers.parse("Jev was shown {count:d} test results"))
 def shown_tests(world, count):
     assert len(world["jev"].states[-1]["tests"]) == count

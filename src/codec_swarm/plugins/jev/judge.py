@@ -27,10 +27,32 @@ class LaneUnderJudgement(BaseModel, frozen=True):
     checks: tuple[Check, ...]
 
 
-def load_scenarios(worktree: Path) -> list[tuple[str, str]]:
-    """(name, text) for every scenario in the lane's approved spec under .swarm/spec/."""
+def _lane_spec_files(worktree: Path, base: str | None) -> set[str] | None:
+    """Spec files this lane added or changed against its base; None when that can't be told (not a git worktree)."""
+    if base is None:
+        return None
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", *args], cwd=worktree, capture_output=True, text=True)
+
+    committed = git("diff", "--name-only", f"origin/{base}...HEAD", "--", ".swarm/spec")
+    pending = git("status", "--porcelain", "--untracked-files=all", "--", ".swarm/spec")
+    if committed.returncode != 0 or pending.returncode != 0:
+        return None
+    return set(committed.stdout.split()) | {line[3:] for line in pending.stdout.splitlines()}
+
+
+def load_scenarios(worktree: Path, base: str | None = None) -> list[tuple[str, str]]:
+    """(name, text) for every scenario in this lane's approved spec under .swarm/spec/.
+
+    Spec files already on the base branch belong to earlier missions (a squash merge can carry them in),
+    so only the ones this lane added or changed count.
+    """
     scenarios: list[tuple[str, str]] = []
+    mine = _lane_spec_files(worktree, base)
     for feature in sorted((worktree / ".swarm" / "spec").glob("*.feature")):
+        if mine is not None and feature.relative_to(worktree).as_posix() not in mine:
+            continue
         blocks = re.split(r"(?m)^(?=[ \t]*Scenario(?: Outline)?:)", feature.read_text())
         for block in (b.strip() for b in blocks[1:]):
             if block:
@@ -56,7 +78,7 @@ class JevJudge:
         lane = self._lane_for(mission)
         results = [(check, *run_check(check, lane.worktree)) for check in lane.checks]
         failed = tuple(check.id for check, ok, _ in results if not ok)
-        scenarios = load_scenarios(lane.worktree)
+        scenarios = load_scenarios(lane.worktree, lane.base)
         stat, diff = _diff(lane.worktree, lane.base)
         tests = [t for check in lane.checks for t in junit_results(lane.worktree, check)]
         state = {

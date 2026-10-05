@@ -131,6 +131,7 @@ class ClaudeCodeBackend:
             model=model,
             system_prompt=spec.system_prompt,
             mcp_servers=resolve_env_refs(spec.mcp_servers, self._env),
+            strict_mcp_config=True,  # only the harness's servers: never the machine's or the account's other MCP configs
             skills=list(spec.skills),
             allowed_tools=list(spec.allowed_tools),
             setting_sources=list(spec.setting_sources),

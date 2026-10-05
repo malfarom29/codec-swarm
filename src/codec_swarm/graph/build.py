@@ -34,6 +34,16 @@ def _mission(state: MissionState) -> Mission:
     return Mission.model_validate(state["mission"])
 
 
+class _LaneEvents:
+    """Stamps every event with the lane it came from, so parallel lanes stay apart in one log."""
+
+    def __init__(self, sink: EventSink) -> None:
+        self._sink = sink
+
+    def append(self, mission: Mission, kind: str, payload: dict[str, Any], role: str | None = None) -> int:
+        return self._sink.append(mission.ticket, kind, {**payload, "lane": mission.repo}, role=role)
+
+
 async def _resolved(value: Any) -> Any:
     return await value if inspect.isawaitable(value) else value
 
@@ -50,6 +60,7 @@ def build_graph(
 ) -> StateGraph:
     with_planning, with_lane = part in ("full", "planning"), part in ("full", "lane")
     graph = StateGraph(MissionState)
+    emit = _LaneEvents(events)
 
     def role_node(role: str):
         async def run(state: MissionState) -> MissionState:
@@ -57,17 +68,17 @@ def build_graph(
             incoming = Handoff.model_validate(state["handoffs"][-1]) if state.get("handoffs") else None
             pick = await _resolved(router.pick_model(pack, mission, role, incoming))
             if pick.next:
-                events.append(mission.ticket, "decision", {"slot": "model", **pick.model_dump()}, role=role)
+                emit.append(mission, "decision", {"slot": "model", **pick.model_dump()}, role=role)
             handoff: Handoff | None = None
             request = StepRequest(mission=mission, role=role, incoming=incoming, model=pick.next or None)
             async for event in backend.run_step(request):
-                events.append(mission.ticket, event.kind, event.payload, role=role)
+                emit.append(mission, event.kind, event.payload, role=role)
                 if event.kind == "handoff":
                     handoff = Handoff.model_validate(event.payload)
             if handoff is None:
                 raise RuntimeError(f"{role} ended its step without a handoff")
             decision = await _resolved(router.next_role(pack, role, handoff))
-            events.append(mission.ticket, "decision", {"slot": "next_role", **decision.model_dump()}, role=role)
+            emit.append(mission, "decision", {"slot": "next_role", **decision.model_dump()}, role=role)
             if recorder is not None:
                 step = len(state.get("handoffs", [])) + 1
                 sha = recorder.record(mission, step, handoff, decision.next)
@@ -90,7 +101,7 @@ def build_graph(
             reworks += 1
             nxt = pack.rework_role if reworks <= pack.max_rework else "review_gate"
         record = {**verdict.model_dump(), "band": band.value}
-        events.append(mission.ticket, "verdict", {**record, "next": nxt}, role="judge")
+        emit.append(mission, "verdict", {**record, "next": nxt}, role="judge")
         update: MissionState = {"trail": ["judge"], "verdict": record, "next": nxt, "reworks": reworks}
         if nxt == pack.rework_role:
             # The coder starts from what the judge actually saw, not from the last role's claims.
@@ -127,13 +138,13 @@ def build_graph(
         if publisher is not None:
             handoffs = [Handoff.model_validate(h) for h in state.get("handoffs", [])]
             url = publisher.publish(mission, handoffs, state.get("verdict"))
-            events.append(mission.ticket, "pr.opened", {"url": url})
-        events.append(mission.ticket, "mission.done", {"status": "pr_ready", "pr_url": url})
+            emit.append(mission, "pr.opened", {"url": url})
+        emit.append(mission, "mission.done", {"status": "pr_ready", "pr_url": url})
         return {"status": "pr_ready", "pr_url": url}
 
     def planned_node(state: MissionState) -> MissionState:
         mission = _mission(state)
-        events.append(mission.ticket, "mission.planned", {"repos": list(mission.repos)})
+        emit.append(mission, "mission.planned", {"repos": list(mission.repos)})
         return {"status": "planned"}
 
     after_spec = pack.lane_roles[0] if with_lane else "planned"

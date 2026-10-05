@@ -60,7 +60,8 @@ def mission_metrics(events: list[Event]) -> MissionMetrics:
             m["agent_cost_usd"] = m.get("agent_cost_usd", 0.0) + (p.get("cost_usd") or 0.0)
             m["agent_turns"] = m.get("agent_turns", 0) + (p.get("turns") or 0)
         elif e.kind == "jev.usage":
-            m["jev_calls"], m["jev_tokens"] = p.get("calls", 0), p.get("tokens", 0)
+            m["jev_calls"] = m.get("jev_calls", 0) + p.get("calls", 0)
+            m["jev_tokens"] = m.get("jev_tokens", 0) + p.get("tokens", 0)
         elif e.kind == "gate.decision" and p.get("action") == "ask":
             m["blocked_commands"] = m.get("blocked_commands", 0) + 1
         elif e.kind == "mission.done":

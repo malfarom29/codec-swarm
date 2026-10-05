@@ -10,24 +10,12 @@ from pathlib import Path
 import anyio
 from dotenv import load_dotenv
 
-from codec_swarm.domain import Autonomy, Mission, choose_pack_rule
-from codec_swarm.graph import APPROVE, SEND_BACK, MissionRunner
-from codec_swarm.graph.coordinator import MissionCoordinator
-from codec_swarm.harness import LocalOverrides, load_pack, load_repo_config, resolve_session
-from codec_swarm.plugins.claude_code import ClaudeCodeBackend
-from codec_swarm.plugins.gate import PerRepoGate
-from codec_swarm.plugins.jev import JevClient, LaneUnderJudgement
-from codec_swarm.plugins.jev.packs import choose_pack_jev
-from codec_swarm.plugins.registry import build_plugins
-from codec_swarm.store import EventLog, GateCache, SessionStore
+from codec_swarm.domain import Autonomy
+from codec_swarm.graph import APPROVE, SEND_BACK
+from codec_swarm.service import MissionRequest, MissionService
+from codec_swarm.store import EventLog
 from codec_swarm.store.metrics import compare, mission_metrics
-from codec_swarm.workspace import Workspace, WorkspaceRecorder
-from codec_swarm.workspace.github import GitHubPublisher
 from codec_swarm.workspace.lanes import DEFAULT_ROOT
-
-
-def _repo_name(url: str) -> str:
-    return url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
 
 
 def _print_events(events: EventLog, ticket: str, since: int) -> int:
@@ -74,81 +62,31 @@ def _ask(lane: str | None, gate: dict, auto_approve: bool) -> str | None:
 
 
 async def run_mission(args: argparse.Namespace) -> int:
-    root = Path(args.root).expanduser()
-    root.mkdir(parents=True, exist_ok=True)
-    workspace = Workspace(root)
-    standard = load_pack("codec-standard")
-    repos = [(url, _repo_name(url)) for url in args.repo_url]
-    configs = {name: load_repo_config(workspace.clone(url, name), standard) for url, name in repos}
-    primary = configs[repos[0][1]]
-    names = tuple(name for _, name in repos)
-    mission = Mission(
-        ticket=args.ticket, repo="", repos=names, title=args.title, description=args.description,
-        autonomy=Autonomy(args.autonomy), bands=primary.judge,
+    service = MissionService(Path(args.root))
+    request = MissionRequest(
+        ticket=args.ticket, title=args.title, repo_urls=tuple(args.repo_url), description=args.description,
+        autonomy=Autonomy(args.autonomy), pack=args.pack, model=args.model, no_jev=args.no_jev,
     )
-    sensitive = any(c.sensitive for c in configs.values())
-    jev = JevClient()
-    if args.pack == "auto":
-        if args.no_jev or not jev_on():
-            choice = choose_pack_rule(bool(mission.description.strip()), len(names), sensitive)
-        else:
-            choice = await choose_pack_jev(jev, mission, len(names), sensitive)
-        print(f"pack {choice.next} ({choice.source}: {choice.rationale})")
-        pack_name = choice.next
+    seen = max((e.id for e in service.events.list(args.ticket)), default=0)
+    if args.recover:
+        result = await service.recover(args.ticket)
     else:
-        pack_name = args.pack
-    pack = load_pack(pack_name)
-    lanes = {
-        (args.ticket, name): workspace.prepare_lane(url, name, args.ticket, args.title, configs[name].branch_flow) for url, name in repos
-    }
-    for lane in lanes.values():
-        print(f"lane {lane.repo} · {lane.branch}\n  {lane.path}")
-
-    db = root / "swarm.db"
-    events, sessions, cache = EventLog(db), SessionStore(db), GateCache(db)
-    overrides = LocalOverrides(model=args.model)
-    judged = {
-        name: LaneUnderJudgement(worktree=lanes[(args.ticket, name)].path, base=lanes[(args.ticket, name)].base, checks=configs[name].checks)
-        for name in names
-    }
-    use_jev, ask = not args.no_jev, None if args.no_jev else jev
-    plugins = build_plugins(pack, primary, lambda m: judged[m.repo], cache, use_jev=use_jev, ask=ask)
-    gate = PerRepoGate({name: build_plugins(pack, configs[name], lambda m: judged[m.repo], cache, use_jev, ask).gate for name in names}, plugins.gate)
-    print(f"  Jev {'on: routing, command gate and judge' if plugins.jev else 'off: fixed rules, allowlist and checks-only judge'}")
-
-    def session_for(m: Mission, role: str):
-        if m.repo:  # a lane role works in its repo's worktree
-            return resolve_session(pack, configs[m.repo], role, lanes[(m.ticket, m.repo)].path, m, overrides=overrides)
-        return resolve_session(pack, primary, role, workspace.mission_dir(m.ticket), m, overrides=overrides)
-
-    backend = ClaudeCodeBackend(session_for, gate, sessions)
-    recorder, publisher = WorkspaceRecorder(workspace, lanes), GitHubPublisher(lanes)
-
-    def runner(part: str) -> MissionRunner:
-        return MissionRunner(db, pack.pack, backend, plugins.router, plugins.judge, events, recorder=recorder, publisher=publisher, part=part)
-
-    coordinator = MissionCoordinator(runner("planning"), runner("lane"), events, pusher=publisher)
-    seen = max((e.id for e in events.list(args.ticket)), default=0)
-    labels = {"pack": pack_name, "jev": plugins.jev, "repos": list(names)}
-    result = await (coordinator.recover(args.ticket) if args.recover else coordinator.start(mission, labels))
-    seen = _print_events(events, args.ticket, seen)
+        runtime = await service.build(request)
+        print(f"pack {runtime.pack_name} · Jev {'on' if runtime.jev_on else 'off'}")
+        for repo in runtime.mission.repos:
+            print(f"lane {repo} · {service._workspace.worktrees / args.ticket / repo}")
+        result = await service.start(request)
+    seen = _print_events(service.events, args.ticket, seen)
     while not result.blocked and (waiting := result.waiting()):
-        answered = False
         for lane, gate_info in waiting:
             answer = _ask(lane, gate_info, args.yes)
-            if answer is None:
-                continue
-            result = await coordinator.answer(args.ticket, lane, answer)
-            seen = _print_events(events, args.ticket, seen)
-            answered = True
-            break  # the mission changed: re-read which gates are open
-        if not answered:
-            break
-    await jev.aclose()
-    tokens = sum((c.get("input_tokens") or 0) + (c.get("output_tokens") or 0) for c in jev.calls)
-    events.append(args.ticket, "jev.usage", {"calls": len(jev.calls), "tokens": tokens})
-    if jev.calls:
-        print(f"  Jev: {len(jev.calls)} calls · {tokens} tokens")
+            if answer is not None:
+                result = await service.answer(args.ticket, lane, answer)
+                seen = _print_events(service.events, args.ticket, seen)
+                break  # the mission changed: re-read which gates are open
+        else:
+            break  # every open gate is waiting for a human
+    await service.aclose()
     if result.blocked:
         print(f"\n{args.ticket}: blocked · {result.blocked}")
         return 1
@@ -186,6 +124,22 @@ def report(args: argparse.Namespace) -> int:
     return 0
 
 
+def up(args: argparse.Namespace) -> int:
+    import secrets
+
+    import uvicorn
+
+    from codec_swarm.web.app import create_app
+
+    # A new token every launch; the URL below carries it. CODEC_SWARM_TOKEN pins it for local previews.
+    token = os.environ.get("CODEC_SWARM_TOKEN") or secrets.token_urlsafe(18)
+    service = MissionService(Path(args.root))
+    app = create_app(service, token)
+    print(f"codec-swarm dashboard: http://127.0.0.1:{args.port}/?token={token}")
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")  # localhost only
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     # `uv run codec-swarm` exports codec-swarm's own venv; agents and checks must use the target repo's.
@@ -204,6 +158,9 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--root", default=str(DEFAULT_ROOT))
     m.add_argument("--recover", action="store_true", help="continue a mission that crashed mid-step")
     m.add_argument("--yes", action="store_true", help="approve every gate without asking (sandbox repos only)")
+    u = sub.add_parser("up", help="serve the dashboard on localhost")
+    u.add_argument("--port", type=int, default=8765)
+    u.add_argument("--root", default=str(DEFAULT_ROOT))
     r = sub.add_parser("report", help="metrics per mission and the pack / Jev comparison")
     r.add_argument("tickets", nargs="*")
     r.add_argument("--root", action="append", help="workspace root to read; repeat to combine several (default ~/.codec-swarm)")
@@ -212,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
         return anyio.run(run_mission, args)
     if args.command == "report":
         return report(args)
+    if args.command == "up":
+        return up(args)
     return 2
 
 

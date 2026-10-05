@@ -93,6 +93,13 @@ Feature: M3 Jev plugins
     Then the verdict score is 0.40 and the band is stop
     And the verdict rationale names "Refund case 1"
 
+  Scenario: The judge ignores scenarios an earlier mission left on the base branch
+    Given a lane whose base branch already has an earlier mission's spec file
+    And the lane adds its own spec file with 2 scenarios
+    And the Jev judge for that lane with passing checks
+    When the judge evaluates the lane
+    Then the verdict lists a probability for each of the 2 scenarios
+
   Scenario: The Jev judge sees which tests passed from the JUnit report
     Given a Jev judge whose passing check writes a JUnit report of 3 tests, 1 failing
     And the lane has 2 approved scenarios
