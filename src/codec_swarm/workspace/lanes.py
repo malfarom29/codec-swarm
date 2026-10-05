@@ -64,6 +64,7 @@ class Workspace:
 
         Agents never commit themselves: git commit is not on any allowlist, and one commit per step keeps history readable.
         """
+        unlisted = unlisted_new_files(lane.path, handoff.files_touched)
         if git(lane.path, "status", "--porcelain"):
             git(lane.path, "add", "--all")
             message = handoff.commit_message or f"chore: {handoff.from_role} changes for {lane.ticket}"
@@ -71,13 +72,34 @@ class Workspace:
         folder = lane.path / ".swarm" / "handoffs"
         folder.mkdir(parents=True, exist_ok=True)
         name = f"{step:02d}-{handoff.from_role}-{to_role}.md"
-        (folder / name).write_text(render_handoff(lane.ticket, handoff, to_role))
+        (folder / name).write_text(render_handoff(lane.ticket, handoff, to_role, unlisted))
         git(lane.path, "add", str(folder / name))
         git(lane.path, *SWARM_IDENTITY, "commit", "--quiet", "-m", f"chore(swarm): {handoff.from_role} handoff")
         return git(lane.path, "rev-parse", "HEAD")
 
 
-def render_handoff(ticket: str, handoff: Handoff, to_role: str) -> str:
+def _normalized(worktree: Path, paths: tuple[str, ...] | list[str]) -> set[str]:
+    out = set()
+    for raw in paths:
+        path = Path(raw)
+        if path.is_absolute():
+            try:
+                path = path.resolve().relative_to(worktree.resolve())
+            except ValueError:
+                continue
+        out.add(path.as_posix().lstrip("./"))
+    return out
+
+
+def unlisted_new_files(worktree: Path, listed: tuple[str, ...] | list[str]) -> list[str]:
+    """Untracked files outside .swarm/ that the handoff did not name: often scratch scripts left behind."""
+    names = _normalized(worktree, listed)
+    status = git(worktree, "status", "--porcelain", "--untracked-files=all")
+    new = [line[3:] for line in status.splitlines() if line.startswith("?? ")]
+    return [p for p in new if not p.startswith(".swarm/") and p not in names]
+
+
+def render_handoff(ticket: str, handoff: Handoff, to_role: str, unlisted: list[str] | None = None) -> str:
     lines = [
         f"# Handoff: {handoff.from_role} → {to_role}",
         "",
@@ -97,6 +119,8 @@ def render_handoff(ticket: str, handoff: Handoff, to_role: str) -> str:
         *([f"- {q}" for q in handoff.questions] or ["- none"]),
         "",
     ]
+    if unlisted:
+        lines += ["## New files not listed", "", "The orchestrator committed these, but the handoff did not name them:", "", *[f"- `{p}`" for p in unlisted], ""]
     return "\n".join(lines)
 
 

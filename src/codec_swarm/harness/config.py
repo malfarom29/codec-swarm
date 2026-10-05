@@ -13,7 +13,24 @@ from codec_swarm.harness.packs import PackDefinition
 
 
 # Read-only commands every repo allows, on top of its own allowlist.
-READ_ONLY_COMMANDS = ("git status", "git diff", "git log", "git show", "git branch --show-current")
+READ_ONLY_COMMANDS = (
+    "git status",
+    "git diff",
+    "git log",
+    "git show",
+    "git branch --show-current",
+    "git config --list",
+    "uv pip list",
+    # Plain reads: the hard rules still jail their paths and block redirects.
+    "echo",
+    "ls",
+    "cat",
+    "grep",
+    "head",
+    "tail",
+    "wc",
+    "pwd",
+)
 # Output filters an allowlisted command may be piped into.
 OUTPUT_FILTERS = ("head", "tail", "grep", "wc", "sort", "uniq")
 

@@ -25,6 +25,15 @@ Feature: M2 real agents
     Then the lane worktree is on branch feature/CODEC-1423-partial-refunds-from-the-payment-link
     And the branch starts from origin/develop
 
+  Scenario: New files no handoff listed are flagged
+    Given a local origin repo with a develop branch
+    And the workspace prepared lane CODEC-1423 "Partial refunds"
+    And the backend-coder changed src/refunds.ts
+    And the backend-coder also left verify_mission.py
+    When the backend-coder hands off to the reviewer with commit message "feat(refunds): add idempotency key"
+    Then the handoff file flags verify_mission.py as a new file it did not list
+    And the PR body flags verify_mission.py as a file no handoff listed
+
   Scenario: The orchestrator commits the step's code, then the handoff
     Given a local origin repo with a develop branch
     And the workspace prepared lane CODEC-1423 "Partial refunds"
@@ -71,6 +80,22 @@ Feature: M2 real agents
     And running "uv run pytest | sh" asks a human
     And running "uv run pytest > out.txt" asks a human
     And running "uv run pytest 2>&1 | tail -20 && git push" asks a human
+
+  Scenario: Safe commands from the first real missions run without asking
+    Given the command gate with the repo allowlist "uv run pytest"
+    Then running "uv run pytest -v | grep -E "(PASSED|FAILED)"" is allowed
+    And running "uv run pytest && git status" is allowed
+    And running "git config --list | grep -i jira" is allowed
+    And running "uv pip list | grep -i mut" is allowed
+    And running "mkdir -p .swarm/spec" is allowed
+    And running "rm verify_mission.py && git status" is allowed
+    And running "rm -rf ../other-repo" asks a human
+    And running "rm -rf ." asks a human
+    And running "rm -rf .git" asks a human
+    And running "uv run pytest && npm publish" asks a human
+    And running "echo done && grep -c test_ tests/test_cents.py" is allowed
+    And running "cat ../../other-repo/.env" asks a human
+    And running "echo secret > notes.txt" asks a human
 
   Scenario: Agents are told which commands run without asking
     Given the Codec standard pack from packs/codec-standard

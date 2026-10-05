@@ -143,6 +143,28 @@ def changed_file(world):
     (world["lane"].path / "src" / "refunds.ts").write_text("export const refund = () => {};\n")
 
 
+@given("the backend-coder also left verify_mission.py")
+def scratch_file(world):
+    (world["lane"].path / "verify_mission.py").write_text("print('checking')\n")
+
+
+@then("the handoff file flags verify_mission.py as a new file it did not list")
+def handoff_flags(world):
+    text = (world["lane"].path / ".swarm" / "handoffs" / "01-backend-coder-reviewer.md").read_text()
+    section = text[text.index("## New files not listed"):]
+    assert "`verify_mission.py`" in section and "refunds.ts" not in section
+
+
+@then("the PR body flags verify_mission.py as a file no handoff listed")
+def pr_body_flags(world):
+    from codec_swarm.workspace.github import pr_body
+
+    handoff = Handoff(from_role="backend-coder", summary="Added POST /refunds.", files_touched=("src/refunds.ts",))
+    body = pr_body(Mission(ticket="CODEC-1423", repo="codec-payment", title="Partial refunds"), [handoff], None, world["lane"])
+    section = body[body.index("## Files no handoff listed"):]
+    assert "`verify_mission.py`" in section and "refunds.ts" not in section
+
+
 @when(parsers.parse('the backend-coder hands off to the reviewer with commit message "{message}"'))
 def hands_off(world, message):
     handoff = Handoff(
