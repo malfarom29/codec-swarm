@@ -1,0 +1,17 @@
+<div class="panel gate" data-gate="{{ g.ticket }}:{{ g.lane }}:{{ g.kind }}">
+  <div class="what">
+    <div><span class="id">{{ g.ticket }}</span> · <strong>{{ g.kind }} gate</strong>{% if g.lane %} · lane <span class="mono">{{ g.lane }}</span>{% endif %}{% if g.after %} · after {{ g.after }}{% endif %}</div>
+    {% if titles is defined and titles.get(g.ticket) %}<div class="sub" style="margin:2px 0 0">{{ titles[g.ticket] }}</div>{% endif %}
+    {% if g.verdict %}
+    {% set failed = g.verdict.get("failed_checks") or [] %}
+    <div class="verdict">judge {{ g.verdict.get("source") }} · {% if g.verdict.get("score") is not none %}score {{ "%.2f" | format(g.verdict.score) }}{% else %}no score{% endif %} · {{ g.verdict.get("band") }} band{% if failed %} · <span style="color:var(--red)">failed: {{ failed | join(", ") }}</span>{% endif %}
+{{ g.verdict.get("rationale", "") }}</div>
+    {% endif %}
+  </div>
+  <form method="post" action="/missions/{{ g.ticket }}/gates" class="actions">
+    <input type="hidden" name="lane" value="{{ g.lane }}">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button class="primary" name="answer" value="approve">Approve</button>
+    <button name="answer" value="send_back">Send back</button>
+  </form>
+</div>

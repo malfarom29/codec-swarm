@@ -1,0 +1,2 @@
+{% set back = "/inbox" %}
+{% for g in gates %}{% include "_gate.html" %}{% else %}<p class="empty">Nothing is waiting on you.</p>{% endfor %}

@@ -1,0 +1,42 @@
+<div class="kpis">
+  <div class="kpi"><span>Missions in progress</span><b>{{ kpis.in_progress }}</b><small>{{ kpis.agents }} agent{{ "s" if kpis.agents != 1 }} working</small></div>
+  <div class="kpi {{ 'attn' if kpis.waiting }}"><span>Waiting on you</span><b>{{ kpis.waiting }}</b><small><a href="/inbox">open the inbox</a></small></div>
+  <div class="kpi"><span>Approved by the judge without you</span><b>{{ kpis.approved }} <i>of {{ kpis.judged }}</i></b><small>lanes judged</small></div>
+  <div class="kpi"><span>Estimated cost today</span><b>${{ "%.2f" | format(kpis.cost_today) }}</b><small>Claude Code estimate</small></div>
+</div>
+{% if view == "agents" %}
+<div class="board agents">
+  {% for key, label in agents %}{% set col = cards[key] %}
+  {% if col or key not in ("frontend-coder", "coder") %}
+  <section class="col" aria-label="{{ label }}" data-agent="{{ key }}">
+    <h3><span>{{ label }}</span><span>{{ col | length }}</span></h3>
+    {% for c in col %}{% include "_lane_card.html" %}{% else %}<div class="empty">Idle</div>{% endfor %}
+  </section>
+  {% endif %}
+  {% endfor %}
+  <section class="col waiting" aria-label="Waiting on you" data-agent="waiting">
+    <h3><span>Waiting on you</span><span>{{ cards.waiting | length }}</span></h3>
+    {% for c in cards.waiting %}{% include "_lane_card.html" %}{% else %}<div class="empty">Nothing</div>{% endfor %}
+  </section>
+</div>
+{% else %}
+<div class="board">
+  {% for key, label, hint in stages %}
+  {% set cards_here = missions | selectattr("stage", "equalto", key) | list %}
+  <section class="col" aria-label="{{ label }}">
+    <h3><span>{{ label }}</span><span>{{ cards_here | length }}</span></h3>
+    <p class="hint">{{ hint }}</p>
+    {% for m in cards_here %}
+    <a class="card {{ 'attn' if m.open_gates }}" href="/missions/{{ m.ticket }}" data-ticket="{{ m.ticket }}" data-stage="{{ key }}">
+      <span class="id">{{ m.ticket }}</span> {% if m.jev %}<span class="pill aqua">Jev</span>{% endif %} {% if m.pack %}<span class="pill dim">{{ m.pack }}</span>{% endif %}
+      <div class="title">{{ m.title or "untitled" }}</div>
+      <div class="lanelist">
+        {% for repo, lane in m.lanes.items() %}<div><span class="dot s-{{ lane.stage }}"></span><span class="mono">{{ repo }}</span><span class="muted">{{ lane.current_role or lane.status.replace("_", " ") }}</span></div>{% endfor %}
+      </div>
+      <div class="meta"><span>${{ "%.2f" | format(m.cost_usd) }}</span>{% if m.open_gates %}<span class="pill amber">{{ m.open_gates | length }} gate{{ "s" if m.open_gates | length > 1 }}</span>{% endif %}</div>
+    </a>
+    {% else %}<div class="empty">No missions</div>{% endfor %}
+  </section>
+  {% endfor %}
+</div>
+{% endif %}

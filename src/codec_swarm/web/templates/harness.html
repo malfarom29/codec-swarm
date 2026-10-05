@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Harness · codec-swarm{% endblock %}
+{% block main %}
+<h1>Harness</h1>
+<p class="sub">What each Claude Code session loads. Edit the pack files in <code>packs/</code>; this page shows what they say.</p>
+{% for p in packs %}
+<h2>Pack {{ p.pack.name }}</h2>
+<div class="panel tablewrap">
+<table>
+  <thead><tr><th>Role</th><th>Model</th><th>Floor</th><th>MCP servers</th><th>Skills</th><th>Max turns</th></tr></thead>
+  <tbody>
+  {% for role in p.pack.planning_roles + p.pack.lane_roles %}{% set r = p.roles[role] %}
+    <tr data-role="{{ role }}"><td>{{ role }}{% if r.plans_lanes %} <span class="pill aqua">plans lanes</span>{% endif %}</td><td class="mono">{{ r.model }}</td><td class="mono">{{ r.min_model }}</td>
+      <td class="mono">{{ r.mcp | join(", ") or "none" }}</td><td class="mono">{{ r.skills | join(", ") or "none" }}</td><td class="mono">{{ r.max_turns }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endfor %}
+<h2>Constitution</h2>
+<div class="panel">Layers, lower number wins: 1 Core · 2 Domain (the repo's <code>.swarm/domain.md</code>) · 3 Stack · 4 Role · 5 Mission, plus the commands each repo allows without asking.</div>
+{% endblock %}

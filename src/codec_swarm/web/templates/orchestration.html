@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Orchestration · codec-swarm{% endblock %}
+{% block main %}
+<h1>Orchestration</h1>
+<p class="sub">What decides for the agents: models, who goes next, which commands run alone, and when a lane is done.</p>
+<div class="panel">
+  <strong>Jev</strong> {% if jev_on %}<span class="pill aqua">on · {{ jev_model }}</span>{% else %}<span class="pill dim">off: no TYPESAFE_API_KEY</span>{% endif %}
+  <p class="sub" style="margin:6px 0 0">{% if jev_on %}Jev routes models, picks send-back targets, scores commands in Auto mode and judges lanes. Any Jev error falls back to the fixed rule for that one decision.{% else %}Fixed model per role, pack order, the allowlist and the checks-only judge.{% endif %}</p>
+</div>
+<div class="panel tablewrap">
+<table>
+  <thead><tr><th>Slot</th><th>With Jev</th><th>Without Jev</th></tr></thead>
+  <tbody>
+    <tr><td>Judge bands</td><td class="mono" data-bands>approve ≥ {{ "%.2f" | format(bands.approve_at) }} · review ≥ {{ "%.2f" | format(bands.review_at) }} · stop below; score = weakest scenario</td><td>No score: a failed check sends back, clean checks go to you</td></tr>
+    <tr><td>Command gate</td><td class="mono" data-gate-band>run ≥ {{ "%.2f" | format(gate_run) }} · unsure {{ "%.2f" | format(gate_unsure) }}–{{ "%.2f" | format(gate_run) }} asks · ask below (Auto mode)</td><td>Allowlist only</td></tr>
+    <tr><td>Model routing</td><td>Cheapest likely to succeed, never below the role's floor</td><td>Fixed model per role</td></tr>
+    <tr><td>Next role</td><td>Send-backs may go further back at ≥ 0.70 confidence</td><td>Pack order; send back one step</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="panel">Always ask, whatever the allowlist or Jev says: <code>git push</code>, package publishing, migrations, <code>kubectl</code>/<code>helm</code>, <code>terraform apply</code>, inline code, and any path outside the lane worktree.</div>
+{% endblock %}

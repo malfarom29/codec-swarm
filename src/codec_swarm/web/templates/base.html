@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}codec-swarm{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;600&display=swap">
+  <link rel="stylesheet" href="/static/codec.css?v={{ css_v }}">
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.2/sse.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+</head>
+<body>
+<div class="shell">
+  <nav class="side" aria-label="Sections">
+    <div class="brand"><img src="/static/logo.svg" alt="" width="36" height="36"><span>codec-swarm<small>local agent swarm</small></span></div>
+    {% set here = request.url.path %}
+    <a href="/" class="{{ 'active' if here == '/' or (here.startswith('/missions/') and here != '/missions/new') }}">Missions</a>
+    <a href="/inbox" class="{{ 'active' if here == '/inbox' }}">Inbox</a>
+    <a href="/missions/new" class="{{ 'active' if here == '/missions/new' }}">New mission</a>
+    <a href="/harness" class="{{ 'active' if here == '/harness' }}">Harness</a>
+    <a href="/orchestration" class="{{ 'active' if here == '/orchestration' }}">Orchestration</a>
+    <div class="foot">Jev {% if jev_on %}<span class="pill aqua">on</span>{% else %}<span class="pill dim">off</span>{% endif %}</div>
+  </nav>
+  <main hx-ext="sse" sse-connect="/events/stream?since={{ last_id }}">
+    {% block main %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

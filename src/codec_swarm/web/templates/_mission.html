@@ -1,0 +1,98 @@
+<div class="head">
+  <div>
+    <h1><span class="id">{{ m.ticket }}</span> {{ m.title }}</h1>
+    <p class="sub">
+      {% if m.pack %}<span class="pill dim">{{ m.pack }}</span>{% endif %}
+      {% if m.autonomy %}<span class="pill dim">{{ m.autonomy }}</span>{% endif %}
+      {% if m.jev %}<span class="pill aqua">Jev on</span>{% else %}<span class="pill dim">Jev off</span>{% endif %}
+      · ${{ "%.2f" | format(m.cost_usd) }} so far
+      {% if m.blocked %}· <span class="pill red">blocked: {{ m.blocked }}</span>{% endif %}
+    </p>
+  </div>
+</div>
+{% set back = "/missions/" ~ m.ticket %}
+{% if m.planning_gate %}{% set g = m.planning_gate %}{% include "_gate.html" %}{% endif %}
+<div class="panel lanesummary">
+  <h2 style="margin-top:0">Lanes by repo</h2>
+  {% for repo, lane in m.lanes.items() %}
+  <div class="lanerow" data-lane="{{ repo }}" data-status="{{ lane.status }}">
+    <div><span class="mono"><b>{{ repo }}</b></span>{% if lane.after %}<br><span class="muted">after {{ lane.after | join(", ") }}</span>{% endif %}</div>
+    <ol class="steps">
+      {% for key, label, _ in stages if key != "blocked" %}
+      {% set idx = loop.index0 %}{% set here = stage_index[lane.stage] if lane.stage in stage_index else -1 %}
+      <li class="{{ 'done' if idx < here or lane.stage == 'pr_ready' else ('now' if idx == here else '') }}">{{ label }}</li>
+      {% endfor %}
+    </ol>
+    <div class="right">
+      {% set tone = {"pr_ready": "", "waiting": "amber", "failed": "red", "running": "aqua"}.get(lane.status, "dim") %}
+      <span class="pill {{ tone }}">{{ lane.status.replace("_", " ") }}{% if lane.gate %} · {{ lane.gate.kind }} gate{% endif %}</span>
+      {% if lane.pr_url %}<a href="{{ lane.pr_url }}" target="_blank" rel="noopener">PR</a>{% endif %}
+    </div>
+  </div>
+  {% for g in [lane.gate] if lane.gate %}{% include "_gate.html" %}{% endfor %}
+  {% endfor %}
+</div>
+<div class="tabs" role="tablist">
+  <button role="tab" :class="{on: tab === 'activity'}" @click="tab = 'activity'">Activity</button>
+  <button role="tab" :class="{on: tab === 'agents'}" @click="tab = 'agents'">Agents</button>
+  <button role="tab" :class="{on: tab === 'dod'}" @click="tab = 'dod'">Definition of Done</button>
+  <button role="tab" :class="{on: tab === 'costs'}" @click="tab = 'costs'">Costs</button>
+</div>
+<section x-show="tab === 'activity'" data-tab="activity">
+  <ul class="feed panel">
+    {% for t, line in activity %}<li><span class="t">{{ t }}</span><span>{{ line }}</span></li>{% else %}<li><span></span><span class="empty">No activity yet</span></li>{% endfor %}
+  </ul>
+</section>
+<section x-show="tab === 'agents'" x-cloak data-tab="agents">
+  {% for repo, lane in m.lanes.items() %}
+  <h2>{{ repo }}</h2>
+  <div class="lanes">
+    {% for role, lines in agent_terminals[repo].items() %}{% set r = lane.roles.get(role) %}
+    <section class="panel lane" data-lane="{{ repo }}" data-role="{{ role }}">
+      <h3><span>{{ role }}</span>{% if lane.current_role == role and lane.status == "running" %}<span class="pill aqua">working</span>{% endif %}
+        {% if r %}<span class="pill dim">{{ r.model or "default model" }}</span><span class="muted">{{ r.turns }} turns · ${{ "%.2f" | format(r.cost_usd) }}</span>{% endif %}</h3>
+      <pre class="term" data-terminal>{% for line in lines %}{{ line }}
+{% endfor %}</pre>
+    </section>
+    {% else %}<p class="empty">{{ "waiting for this lane to start…" if lane.status == "not_started" else "no output recorded for this lane (older missions did not tag events by lane)" }}</p>{% endfor %}
+  </div>
+  {% endfor %}
+</section>
+<section x-show="tab === 'dod'" x-cloak data-tab="dod">
+  {% for repo, lane in m.lanes.items() %}
+  <div class="panel" data-dod="{{ repo }}">
+    <h3 class="mono">{{ repo }}</h3>
+    {% set v = lane.verdicts[-1] if lane.verdicts else none %}
+    {% if v %}
+    <div class="dod">
+      <div>
+        <div class="layer">Layer 1 · Hard checks</div>
+        {% for line in v.rationale.splitlines() if line and not line.startswith(("scenario ", "lane done")) %}<div class="check {{ 'bad' if 'FAIL' in line }}">{{ line }}</div>{% endfor %}
+        <div class="layer">Layer 2 · Acceptance criteria</div>
+        {% for s in v.scenarios or [] %}
+        <div class="scen"><span>{{ s.name }}</span>{% if s.probability is not none %}<span class="bar"><i style="width: {{ (s.probability * 100) | round }}%" class="{{ 'ok' if s.probability >= 0.95 else ('warn' if s.probability >= 0.80 else 'bad') }}"></i></span><span class="mono">{{ "%.2f" | format(s.probability) }}</span>{% endif %}</div>
+        {% else %}<div class="muted">No per-scenario scores from this judge.</div>{% endfor %}
+      </div>
+      <div class="verdictbox" data-verdict>
+        <div class="layer">Layer 3 · Verdict</div>
+        <div class="score">{% if v.score is not none %}{{ "%.2f" | format(v.score) }}{% else %}no score{% endif %}</div>
+        <span class="pill {{ {'approve': '', 'review': 'amber', 'stop': 'red'}.get(v.band, 'dim') }}">{{ v.band }} band</span>
+        <p class="muted">judge {{ v.source }} · {{ lane.verdicts | length }} run{{ "s" if lane.verdicts | length != 1 }} · next: {{ v.next }}</p>
+      </div>
+    </div>
+    {% else %}<p class="empty">Not judged yet.</p>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+<section x-show="tab === 'costs'" x-cloak data-tab="costs">
+  <div class="panel tablewrap">
+  <table>
+    <thead><tr><th>Role</th><th>Lane</th><th>Model</th><th>Steps</th><th>Turns</th><th>Est. cost</th></tr></thead>
+    <tbody>
+      {% for role, r in m.planning_roles.items() %}<tr><td>{{ role }}</td><td class="mono">planning</td><td class="mono">{{ r.model or "default" }}</td><td>{{ r.steps }}</td><td>{{ r.turns }}</td><td>${{ "%.3f" | format(r.cost_usd) }}</td></tr>{% endfor %}
+      {% for repo, lane in m.lanes.items() %}{% for role, r in lane.roles.items() %}<tr><td>{{ role }}</td><td class="mono">{{ repo }}</td><td class="mono">{{ r.model or "default" }}</td><td>{{ r.steps }}{% if r.sent_back %} ({{ r.sent_back }} sent back){% endif %}</td><td>{{ r.turns }}</td><td>${{ "%.3f" | format(r.cost_usd) }}</td></tr>{% endfor %}{% endfor %}
+      <tr><td colspan="5"><b>Mission total</b></td><td><b>${{ "%.2f" | format(m.cost_usd) }}</b></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>

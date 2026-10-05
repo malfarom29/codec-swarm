@@ -1,0 +1,5 @@
+<a class="card {{ 'attn' if c.gate }}" href="/missions/{{ c.m.ticket }}" data-ticket="{{ c.m.ticket }}" data-lane="{{ c.lane }}">
+  <span class="id">{{ c.m.ticket }}</span> {% if c.m.jev %}<span class="pill aqua">Jev</span>{% endif %}
+  <div class="title">{{ c.m.title or "untitled" }}</div>
+  <div class="meta"><span class="mono">{{ c.lane or "planning" }}</span>{% if c.gate %}<span class="pill amber">{{ c.gate.kind }} gate</span>{% endif %}</div>
+</a>

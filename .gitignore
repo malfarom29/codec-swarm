@@ -13,7 +13,7 @@ spikes/out/
 .kerno
 
 # HTML artifacts
-*.html
+/*.html
 
 # local preview config
 .claude/launch.json

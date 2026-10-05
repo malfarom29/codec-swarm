@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Missions · codec-swarm{% endblock %}
+{% block main %}
+<div class="head">
+  <div><h1>Missions</h1><p class="sub">{% if view == "agents" %}Each column is an agent role; each card is a lane that role is working on.{% else %}Each mission groups its repos' lanes. The column shows its least advanced lane.{% endif %}</p></div>
+  <div class="seg" role="tablist" aria-label="Board view">
+    <a href="/?view=stage" role="tab" aria-selected="{{ 'true' if view != 'agents' }}" class="{{ 'on' if view != 'agents' }}">By stage</a>
+    <a href="/?view=agents" role="tab" aria-selected="{{ 'true' if view == 'agents' }}" class="{{ 'on' if view == 'agents' }}">By agent</a>
+  </div>
+</div>
+<div hx-get="/partials/board?view={{ view }}" hx-trigger="sse:change" hx-swap="innerHTML">{% include "_board.html" %}</div>
+{% endblock %}

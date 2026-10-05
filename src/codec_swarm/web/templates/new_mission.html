@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}New mission · codec-swarm{% endblock %}
+{% block main %}
+<h1>New mission</h1>
+<p class="sub">One ticket, one or more repos. With more than one repo, the Architect orders the lanes.</p>
+<form method="post" action="/missions" class="stack">
+  <div class="row2">
+    <label>Ticket <input name="ticket" id="nm-ticket" required placeholder="CODEC-1"></label>
+    <label>Autonomy
+      <select name="autonomy" id="nm-autonomy"><option value="gated">Gated</option><option value="auto">Auto</option><option value="manual">Manual</option></select>
+    </label>
+  </div>
+  <label>Title <input name="title" id="nm-title" required></label>
+  <label>What needs to change, and why <textarea name="description" id="nm-desc" rows="6" placeholder="Acceptance criteria, one per line"></textarea></label>
+  <label>Repos (one URL per line) <textarea name="repo_urls" id="nm-repos" rows="3" required></textarea></label>
+  <div class="row2">
+    <label>Pack
+      <select name="pack" id="nm-pack"><option value="auto">Auto (rule, or Jev)</option><option value="codec-standard">Codec standard</option><option value="solo">Solo</option></select>
+    </label>
+    <label>Force a model (optional) <input name="model" id="nm-model" placeholder="haiku, sonnet or opus"></label>
+  </div>
+  <label class="check"><input type="checkbox" name="jev" id="nm-jev" value="on" {{ "checked" if jev_on else "disabled" }}> Use Jev for this mission{% if not jev_on %} (no TYPESAFE_API_KEY){% endif %}</label>
+  <div><button class="primary" type="submit">Start mission</button></div>
+</form>
+{% endblock %}
