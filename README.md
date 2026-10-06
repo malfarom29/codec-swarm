@@ -107,7 +107,7 @@ Business rules every agent should know go in `~/.codec-swarm/repos.d/<repo>.doma
 
 - **Harness.** For each role you can override the model (never below the role's floor) and add MCP servers or skills; nothing can be removed. To make a new MCP server available, add it to `mcp_catalog` in the pack and put its token in `.env` as `${env:NAME}`.
 - **Orchestration.** Turn Jev on or off, and tune the command-gate threshold and margin.
-- **Jira.** Until you connect Jira, the Intake column shows example tickets. To connect, enter your site, email and API token: the token is checked against Jira, then saved only to `~/.codec-swarm/.env`. Tickets matching the JQL sync every 5 minutes. The default JQL is your open tasks and subtasks.
+- **Jira.** Until you connect Jira, the Intake column shows example tickets. To connect, enter your site, email and API token: the token is checked against Jira, then saved only to `~/.codec-swarm/.env`. Tickets matching the JQL sync every 5 minutes. The default JQL is your tasks and subtasks in To Do or In Progress.
 
 ## Packs and roles
 

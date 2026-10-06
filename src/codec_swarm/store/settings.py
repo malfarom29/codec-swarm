@@ -38,7 +38,7 @@ class RoleOverride(BaseModel):
 class JiraSettings(BaseModel):
     site: str = ""  # https://<you>.atlassian.net
     email: str = ""
-    jql: str = "assignee = currentUser() AND issuetype in (Task, subTaskIssueTypes()) AND statusCategory != Done ORDER BY updated DESC"
+    jql: str = "assignee = currentUser() AND issuetype in (Task, subTaskIssueTypes()) AND status in (\"To Do\", \"In Progress\") ORDER BY updated DESC"
     project: str = ""  # for the quick request form
 
 
