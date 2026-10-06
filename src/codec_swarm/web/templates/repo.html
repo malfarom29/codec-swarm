@@ -1,40 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ r.name }} · codec-swarm<h2 id="env">Environment</h2>
-<div class="panel envpanel">
-  {% if env_note %}<p class="note">{{ env_note }}</p>{% endif %}
-  <p class="muted">Each lane gets these as <span class="mono">{{ env_file }}</span> in its worktree (git never stages it) and as environment variables for its checks and agents.
-    Agents can't print them: reading an env file or dumping the environment always asks you. Stored in <span class="mono">~/.codec-swarm/env/{{ r.name }}.env</span>, readable only by you.</p>
-  {% if sensitive %}<p class="ask">This repo is marked sensitive: prefer test credentials. Values that look like live keys or production hosts are flagged.</p>{% endif %}
-  <table data-env>
-    <thead><tr><th>Variable</th><th>Value</th><th></th></tr></thead>
-    <tbody>
-    {% for v in env_vars %}
-      <tr data-var="{{ v.key }}"><td class="mono">{{ v.key }}</td><td class="mono">{{ v.mask }}{% if v.warning %} <span class="pill red" data-live>{{ v.warning }}</span>{% endif %}</td>
-        <td><form method="post" action="/repos/{{ r.name }}/env"><input type="hidden" name="op" value="delete"><input type="hidden" name="key" value="{{ v.key }}"><button>Delete</button></form></td></tr>
-    {% else %}<tr><td colspan="3" class="empty">No variables yet.</td></tr>{% endfor %}
-    </tbody>
-  </table>
-  <form method="post" action="/repos/{{ r.name }}/env" class="envset">
-    <input type="hidden" name="op" value="set">
-    <label>Variable <input name="key" required pattern="[A-Za-z_][A-Za-z0-9_]*" autocomplete="off" placeholder="DATABASE_URL"></label>
-    <label>Value <input name="value" type="password" autocomplete="new-password" placeholder="replaces any current value"></label>
-    <button class="primary">Save</button>
-  </form>
-  <div class="envcols">
-    <form method="post" action="/repos/{{ r.name }}/env" class="stack">
-      <input type="hidden" name="op" value="import">
-      <label>Paste a .env to add or replace its variables <textarea name="text" rows="5" spellcheck="false" autocomplete="off" placeholder="DATABASE_URL=postgres://…&#10;REDIS_URL=redis://…"></textarea></label>
-      <div><button>Import</button></div>
-    </form>
-    <form method="post" action="/repos/{{ r.name }}/env" class="stack">
-      <input type="hidden" name="op" value="file">
-      <label>File name in each worktree <input name="filename" value="{{ env_file }}" placeholder=".env"></label>
-      <p class="muted">For example <span class="mono">.env.local</span> for Vite or Next.js. If the repo tracks that file, lanes get the values as environment variables only.</p>
-      <div><button>Save</button></div>
-    </form>
-  </div>
-</div>
-{% endblock %}
+{% block title %}{{ r.name }} · codec-swarm{% endblock %}
 {% block main %}
 <p><a href="/repos">← Repos</a></p>
 <div class="head">
@@ -69,5 +34,40 @@
       <div><button class="primary">Save</button></div>
     </form>
   </section>
+</div>
+<h2 id="env">Environment</h2>
+<div class="panel envpanel">
+  {% if env_note %}<p class="note">{{ env_note }}</p>{% endif %}
+  <p class="muted">Each lane gets these as <span class="mono">{{ env_file }}</span> in its worktree (git never stages it) and as environment variables for its checks and agents.
+    Agents can't print them: reading an env file or dumping the environment always asks you. Stored in <span class="mono">~/.codec-swarm/env/{{ r.name }}.env</span>, readable only by you.</p>
+  {% if sensitive %}<p class="ask">This repo is marked sensitive: prefer test credentials. Values that look like live keys or production hosts are flagged.</p>{% endif %}
+  <table data-env>
+    <thead><tr><th>Variable</th><th>Value</th><th></th></tr></thead>
+    <tbody>
+    {% for v in env_vars %}
+      <tr data-var="{{ v.key }}"><td class="mono">{{ v.key }}</td><td class="mono">{{ v.mask }}{% if v.warning %} <span class="pill red" data-live>{{ v.warning }}</span>{% endif %}</td>
+        <td><form method="post" action="/repos/{{ r.name }}/env"><input type="hidden" name="op" value="delete"><input type="hidden" name="key" value="{{ v.key }}"><button>Delete</button></form></td></tr>
+    {% else %}<tr><td colspan="3" class="empty">No variables yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/repos/{{ r.name }}/env" class="envset">
+    <input type="hidden" name="op" value="set">
+    <label>Variable <input name="key" required pattern="[A-Za-z_][A-Za-z0-9_]*" autocomplete="off" placeholder="DATABASE_URL"></label>
+    <label>Value <input name="value" type="password" autocomplete="new-password" placeholder="replaces any current value"></label>
+    <button class="primary">Save</button>
+  </form>
+  <div class="envcols">
+    <form method="post" action="/repos/{{ r.name }}/env" class="stack">
+      <input type="hidden" name="op" value="import">
+      <label>Paste a .env to add or replace its variables <textarea name="text" rows="5" spellcheck="false" autocomplete="off" placeholder="DATABASE_URL=postgres://…&#10;REDIS_URL=redis://…"></textarea></label>
+      <div><button>Import</button></div>
+    </form>
+    <form method="post" action="/repos/{{ r.name }}/env" class="stack">
+      <input type="hidden" name="op" value="file">
+      <label>File name in each worktree <input name="filename" value="{{ env_file }}" placeholder=".env"></label>
+      <p class="muted">For example <span class="mono">.env.local</span> for Vite or Next.js. If the repo tracks that file, lanes get the values as environment variables only.</p>
+      <div><button>Save</button></div>
+    </form>
+  </div>
 </div>
 {% endblock %}

@@ -672,7 +672,9 @@ def paste_env(web, name, key, value):
 
 @then(parsers.parse("{name}'s environment lists {first} and {second} masked"))
 def env_listed(web, name, first, second):
-    page = web["client"].get(f"/repos/{name}").text
+    html = web["client"].get(f"/repos/{name}").text
+    assert '<h2 id="env">' not in html[: html.index("</title>")]  # in the page, not the tab title
+    page = html[html.index("<main") :]
     for key in (first, second):
         assert re.search(rf'data-var="{key}"><td class="mono">{key}</td><td class="mono">••••', page)
 
