@@ -193,7 +193,10 @@ class MissionService:
         return self.prs.load(ticket, repo)
 
     async def pr_action(self, ticket: str, repo: str, action: str, target: str) -> str:
-        """Push the local PR to GitHub or merge it locally, into target. An open PR or review gate is approved first."""
+        """Push the local PR to GitHub or merge it locally, into target; then approve its open PR or review gate.
+
+        The gate is answered only after the push or merge worked, so a conflict leaves the lane waiting on me.
+        """
         loaded = self.local_pr(ticket, repo)
         if loaded is None:
             raise KeyError(f"{ticket} has no local PR for {repo}")
@@ -201,17 +204,17 @@ class MissionService:
         target = target.strip()
         if subprocess.run(["git", "check-ref-format", "--branch", target], capture_output=True).returncode != 0:
             raise ValueError(f"{target!r} is not a branch name")
+        if action == "push":
+            result = await anyio.to_thread.run_sync(self.prs.open_on_github, pr, target)
+            self.events.append(ticket, "pr.pushed", {"lane": repo, "url": result, "target": target})
+        elif action == "merge":
+            result = await anyio.to_thread.run_sync(self.prs.merge_local, pr, target)
+            self.events.append(ticket, "pr.merged", {"lane": repo, "target": target, "sha": result})
+        else:
+            raise ValueError(f"unknown action {action}")
         if self._open_gate(ticket, repo):
             await self.answer(ticket, repo, APPROVE)
-        if action == "push":
-            url = await anyio.to_thread.run_sync(self.prs.open_on_github, pr, target)
-            self.events.append(ticket, "pr.pushed", {"lane": repo, "url": url, "target": target})
-            return url
-        if action == "merge":
-            sha = await anyio.to_thread.run_sync(self.prs.merge_local, pr, target)
-            self.events.append(ticket, "pr.merged", {"lane": repo, "target": target, "sha": sha})
-            return sha
-        raise ValueError(f"unknown action {action}")
+        return result
 
     def _open_gate(self, ticket: str, repo: str) -> bool:
         lane = mission_view(self.events.list(ticket)).lanes.get(repo)

@@ -13,6 +13,8 @@ from typing import Any
 from urllib.parse import urlencode
 
 import anyio
+from markdown_it import MarkdownIt
+from markupsafe import Markup
 import yaml
 from fastapi import BackgroundTasks, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
@@ -127,6 +129,16 @@ def create_app(service: MissionService, token: str) -> FastAPI:
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.add_extension("jinja2.ext.loopcontrols")
+    # Agent-written text: raw HTML stays escaped, except the <details> blocks the PR body itself adds.
+    md = MarkdownIt("commonmark", {"html": False}).enable("table")
+
+    def markdown(text: str) -> Markup:
+        html = md.render(text or "")
+        for tag in ("<details>", "</details>", "<summary>", "</summary>", "<code>", "</code>"):
+            html = html.replace(tag.replace("<", "&lt;").replace(">", "&gt;"), tag)
+        return Markup(html)
+
+    templates.env.filters["markdown"] = markdown
 
     @app.middleware("http")
     async def require_token(request: Request, call_next: Callable[[Request], Awaitable[Any]]):
@@ -365,7 +377,7 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         return RedirectResponse("/orchestration?saved=1", status_code=303)
 
     @app.get("/missions/{ticket}/prs/{repo}", response_class=HTMLResponse)
-    async def local_pr(request: Request, ticket: str, repo: str, error: str = "", done: str = ""):
+    async def local_pr(request: Request, ticket: str, repo: str, error: str = "", done: str = "", target: str = ""):
         loaded = service.local_pr(ticket, repo)
         if loaded is None:
             return PlainTextResponse(f"{ticket} has no local PR for {repo} yet", status_code=404)
@@ -376,7 +388,7 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         verdicts = lane.verdicts if lane else []
         return render(
             request, "pr.html", m=view, pr=pr, body=body, lane=lane, stat=stat, diff_lines=diff.splitlines(),
-            branches=service.prs.branches(pr), verdict=verdicts[-1] if verdicts else None, error=error, done=done,
+            branches=service.prs.branches(pr), verdict=verdicts[-1] if verdicts else None, error=error, done=done, target=target,
             gate=lane.gate if lane and lane.gate and lane.gate.kind in ("pr", "review") else None,
         )
 
@@ -386,7 +398,7 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         try:
             await service.pr_action(ticket, repo, action, target)
         except (ValueError, RuntimeError, KeyError) as error:
-            return RedirectResponse(f"{back}?{urlencode({'error': str(error)})}", status_code=303)
+            return RedirectResponse(f"{back}?{urlencode({'error': str(error), 'target': target})}", status_code=303)
         return RedirectResponse(f"{back}?{urlencode({'done': action})}", status_code=303)
 
     @app.post("/missions/{ticket}/chat")

@@ -18,7 +18,7 @@
 
 <form method="post" action="/missions/{{ m.ticket }}/prs/{{ pr.repo }}" class="panel prform" data-pr-actions>
   <label>Target branch
-    <input name="target" list="branches" value="{{ pr.pushed_to or pr.merged_into or pr.base }}" required autocomplete="off">
+    <input name="target" list="branches" value="{{ target or pr.pushed_to or pr.merged_into or pr.base }}" required autocomplete="off">
     <datalist id="branches">{% for b in branches %}<option value="{{ b }}">{% endfor %}</datalist>
   </label>
   <button class="primary" name="action" value="push" {{ "disabled" if not pr.sha }}>{{ "Update on GitHub" if pr.pushed_url else "Push and open on GitHub" }}</button>
@@ -36,7 +36,7 @@
 <div class="prcols">
   <section>
     <h2>Description</h2>
-    <div class="panel"><pre class="prbody" data-description>{{ body }}</pre></div>
+    <div class="panel prbody" data-description>{{ body | markdown }}</div>
   </section>
   <section>
     <h2>Judge</h2>

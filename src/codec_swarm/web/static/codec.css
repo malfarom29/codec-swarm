@@ -165,7 +165,12 @@ form.stack textarea { width: 100%; }
 .sendback { display: flex; gap: 8px; margin: -4px 0 14px; }
 .prcols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 20px; }
 .prcols h2 { margin-top: 0; }
-.prbody { white-space: pre-wrap; word-break: break-word; margin: 0; font: 13px/1.6 var(--sans); }
+.prbody { word-break: break-word; font-size: 13.5px; }
+.prbody h2 { margin: 16px 0 6px; }
+.prbody h2:first-child, .prbody p:first-child { margin-top: 0; }
+.prbody ul { padding-left: 18px; }
+.prbody pre { background: #060a08; padding: 8px 10px; border-radius: 5px; overflow-x: auto; }
+.prbody summary { cursor: pointer; color: var(--muted); }
 .diff { background: #060a08; border-radius: 6px; padding: 10px 12px; font: 12px/1.5 var(--mono); overflow-x: auto; max-height: 70vh; overflow-y: auto; }
 .diff .add { color: var(--green); } .diff .del { color: var(--red); } .diff .hunk { color: var(--freq); } .diff .file { color: var(--fg); font-weight: 700; }
 @media (max-width: 760px) { .prcols { grid-template-columns: 1fr; } }
