@@ -107,6 +107,11 @@ def build_graph(
         record = {**verdict.model_dump(), "band": band.value}
         emit.append(mission, "verdict", {**record, "next": nxt}, role="judge")
         update: MissionState = {"trail": ["judge"], "verdict": record, "next": nxt, "reworks": reworks}
+        if publisher is not None and nxt in ("done", "pr_gate", "review_gate"):
+            # The local PR is what I review at the gate, so it exists before the gate opens.
+            url = publisher.prepare(mission, [Handoff.model_validate(h) for h in state["handoffs"]], record)
+            emit.append(mission, "pr.local", {"url": url})
+            update["pr_url"] = url
         if nxt == pack.rework_role:
             # The coder starts from what the judge actually saw, not from the last role's claims.
             failed = ", ".join(verdict.failed_checks) or "none"
@@ -138,11 +143,7 @@ def build_graph(
 
     def done_node(state: MissionState) -> MissionState:
         mission = _mission(state)
-        url = None
-        if publisher is not None:
-            handoffs = [Handoff.model_validate(h) for h in state.get("handoffs", [])]
-            url = publisher.publish(mission, handoffs, state.get("verdict"))
-            emit.append(mission, "pr.opened", {"url": url})
+        url = state.get("pr_url")
         emit.append(mission, "mission.done", {"status": "pr_ready", "pr_url": url})
         return {"status": "pr_ready", "pr_url": url}
 

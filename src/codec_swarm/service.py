@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import subprocess
 from datetime import UTC, datetime
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,7 +18,7 @@ import anyio
 from pydantic import BaseModel
 
 from codec_swarm.domain import Autonomy, Mission, choose_pack_rule
-from codec_swarm.graph import MissionRunner
+from codec_swarm.graph import APPROVE, MissionRunner
 from codec_swarm.graph.coordinator import MissionCoordinator, MissionResult
 from codec_swarm.harness import LocalOverrides, load_pack, load_repo_config, resolve_session
 from codec_swarm.plugins.claude_code import ClaudeCodeBackend
@@ -28,9 +29,10 @@ from codec_swarm.plugins.jira import EXAMPLE_TICKETS, JiraClient, Ticket
 from codec_swarm.plugins.registry import build_plugins, jev_available
 from codec_swarm.store import EventLog, GateCache, SessionStore
 from codec_swarm.store.chat import ChatStore
+from codec_swarm.store.views import mission_view
 from codec_swarm.store.settings import JiraSettings, Settings
 from codec_swarm.workspace import Workspace, WorkspaceRecorder
-from codec_swarm.workspace.github import GitHubPublisher
+from codec_swarm.workspace.github import GitHubPublisher, LocalPR
 from codec_swarm.workspace.lanes import DEFAULT_ROOT
 from codec_swarm.workspace.repos import RepoCatalog
 from codec_swarm.workspace.repos import repo_name as repo_name
@@ -126,7 +128,7 @@ class MissionService:
             return resolve_session(pack, primary, role, self._workspace.mission_dir(m.ticket), m, overrides=overrides_for(role))
 
         backend = ClaudeCodeBackend(session_for, gate, self._sessions)
-        recorder, publisher = WorkspaceRecorder(self._workspace, lanes), GitHubPublisher(lanes)
+        recorder, publisher = WorkspaceRecorder(self._workspace, lanes), GitHubPublisher(lanes, record_dir=self._workspace.record_dir)
 
         def runner(part: str) -> MissionRunner:
             return MissionRunner(self.db, pack.pack, backend, plugins.router, plugins.judge, self.events, recorder=recorder, publisher=publisher, part=part, chat=self.chat)
@@ -180,6 +182,40 @@ class MissionService:
                 return await runtime.coordinator.recover(ticket)
             finally:
                 self._log_jev(runtime)
+
+    # --- local PRs ----------------------------------------------------------------
+
+    @property
+    def prs(self) -> GitHubPublisher:
+        return GitHubPublisher({}, record_dir=self._workspace.record_dir)
+
+    def local_pr(self, ticket: str, repo: str) -> tuple[LocalPR, str] | None:
+        return self.prs.load(ticket, repo)
+
+    async def pr_action(self, ticket: str, repo: str, action: str, target: str) -> str:
+        """Push the local PR to GitHub or merge it locally, into target. An open PR or review gate is approved first."""
+        loaded = self.local_pr(ticket, repo)
+        if loaded is None:
+            raise KeyError(f"{ticket} has no local PR for {repo}")
+        pr = loaded[0]
+        target = target.strip()
+        if subprocess.run(["git", "check-ref-format", "--branch", target], capture_output=True).returncode != 0:
+            raise ValueError(f"{target!r} is not a branch name")
+        if self._open_gate(ticket, repo):
+            await self.answer(ticket, repo, APPROVE)
+        if action == "push":
+            url = await anyio.to_thread.run_sync(self.prs.open_on_github, pr, target)
+            self.events.append(ticket, "pr.pushed", {"lane": repo, "url": url, "target": target})
+            return url
+        if action == "merge":
+            sha = await anyio.to_thread.run_sync(self.prs.merge_local, pr, target)
+            self.events.append(ticket, "pr.merged", {"lane": repo, "target": target, "sha": sha})
+            return sha
+        raise ValueError(f"unknown action {action}")
+
+    def _open_gate(self, ticket: str, repo: str) -> bool:
+        lane = mission_view(self.events.list(ticket)).lanes.get(repo)
+        return bool(lane and lane.gate and lane.gate.kind in ("pr", "review"))
 
     # --- talking to agents ----------------------------------------------------
 

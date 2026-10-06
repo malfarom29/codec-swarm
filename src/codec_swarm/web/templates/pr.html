@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ pr.title }} · codec-swarm{% endblock %}
+{% block main %}
+<p><a href="/missions/{{ m.ticket }}">← {{ m.ticket }}</a></p>
+<div class="head">
+  <div>
+    <h1>{{ pr.title }}</h1>
+    <p class="sub"><span class="pill dim">local PR</span> <span class="mono">{{ pr.repo }}</span> · <span class="mono">{{ pr.branch }}</span>
+      {% if pr.sha %}· one commit <span class="mono">{{ pr.sha[:8] }}</span>{% endif %}
+      {% if gate %}· <span class="pill amber">waiting on you</span>{% endif %}
+      {% if pr.pushed_url %}· <a href="{{ pr.pushed_url }}" target="_blank" rel="noopener">open on GitHub into {{ pr.pushed_to }}</a>{% endif %}
+      {% if pr.merged_into %}· <span class="pill" data-merged>merged into {{ pr.merged_into }} ({{ pr.merged_sha[:8] }})</span>{% endif %}</p>
+  </div>
+</div>
+{% if error %}<div class="panel note bad" data-error>{{ error }}</div>{% endif %}
+{% if done == "merge" %}<div class="panel note">Merged into {{ pr.merged_into }} in codec-swarm's clone. Nothing was pushed; when you're ready:<br><code>git -C ~/.codec-swarm/repos/{{ pr.repo }} push origin {{ pr.merged_into }}</code></div>
+{% elif done == "push" %}<div class="panel note">Pushed and opened: <a href="{{ pr.pushed_url }}" target="_blank" rel="noopener">{{ pr.pushed_url }}</a></div>{% endif %}
+
+<form method="post" action="/missions/{{ m.ticket }}/prs/{{ pr.repo }}" class="panel prform" data-pr-actions>
+  <label>Target branch
+    <input name="target" list="branches" value="{{ pr.pushed_to or pr.merged_into or pr.base }}" required autocomplete="off">
+    <datalist id="branches">{% for b in branches %}<option value="{{ b }}">{% endfor %}</datalist>
+  </label>
+  <button class="primary" name="action" value="push" {{ "disabled" if not pr.sha }}>{{ "Update on GitHub" if pr.pushed_url else "Push and open on GitHub" }}</button>
+  <button name="action" value="merge" {{ "disabled" if not pr.sha or pr.merged_into }}>Merge locally</button>
+  <span class="muted">Started from <span class="mono">{{ pr.base }}</span>. Merging stays on this machine; pushing opens the PR with the description below.</span>
+</form>
+{% if gate %}
+<form method="post" action="/missions/{{ m.ticket }}/gates" class="sendback">
+  <input type="hidden" name="lane" value="{{ pr.repo }}"><input type="hidden" name="back" value="/missions/{{ m.ticket }}">
+  <button name="answer" value="send_back">Send back to the coder</button>
+  <button name="answer" value="approve" title="Accept the lane without pushing or merging yet">Accept, decide later</button>
+</form>
+{% endif %}
+
+<div class="prcols">
+  <section>
+    <h2>Description</h2>
+    <div class="panel"><pre class="prbody" data-description>{{ body }}</pre></div>
+  </section>
+  <section>
+    <h2>Judge</h2>
+    <div class="panel">{% if verdict %}<div class="mono">{{ verdict.source }} · {% if verdict.score is not none %}{{ "%.2f" | format(verdict.score) }}{% else %}no score{% endif %} · {{ verdict.band }} band</div>
+      {% for line in (verdict.rationale or "").splitlines() if line.strip() %}<div class="check {{ 'bad' if 'FAIL' in line }}">{{ line }}</div>{% endfor %}{% else %}<span class="empty">not judged</span>{% endif %}</div>
+  </section>
+</div>
+<h2>Files</h2>
+<pre class="term short">{{ stat or "No changes." }}</pre>
+<h2>Diff</h2>
+<pre class="diff" data-diff>{% for line in diff_lines %}<span class="{{ 'add' if line.startswith('+') and not line.startswith('+++') else ('del' if line.startswith('-') and not line.startswith('---') else ('hunk' if line.startswith('@@') else ('file' if line.startswith('diff ') else ''))) }}">{{ line }}</span>
+{% endfor %}</pre>
+{% endblock %}

@@ -92,7 +92,7 @@ async def run_mission(args: argparse.Namespace) -> int:
         return 1
     print()
     for repo, lane in result.lanes.items():
-        print(f"{args.ticket} · {repo}: {lane.status}" + (f" · {lane.pr_url}" if lane.pr_url else ""))
+        print(f"{args.ticket} · {repo}: {lane.status}" + (f" · local PR: open {lane.pr_url} in `codec-swarm up`" if lane.pr_url else ""))
     return 0 if result.done else 1
 
 

@@ -364,6 +364,31 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         service.settings.set_orchestration(Orchestration(jev_enabled=bool(jev_enabled), gate_threshold=gate_threshold, gate_margin=gate_margin))
         return RedirectResponse("/orchestration?saved=1", status_code=303)
 
+    @app.get("/missions/{ticket}/prs/{repo}", response_class=HTMLResponse)
+    async def local_pr(request: Request, ticket: str, repo: str, error: str = "", done: str = ""):
+        loaded = service.local_pr(ticket, repo)
+        if loaded is None:
+            return PlainTextResponse(f"{ticket} has no local PR for {repo} yet", status_code=404)
+        pr, body = loaded
+        view = mission_view(service.events.list(ticket))
+        lane = view.lanes.get(repo)
+        stat, diff = await anyio.to_thread.run_sync(service.prs.diff, pr)
+        verdicts = lane.verdicts if lane else []
+        return render(
+            request, "pr.html", m=view, pr=pr, body=body, lane=lane, stat=stat, diff_lines=diff.splitlines(),
+            branches=service.prs.branches(pr), verdict=verdicts[-1] if verdicts else None, error=error, done=done,
+            gate=lane.gate if lane and lane.gate and lane.gate.kind in ("pr", "review") else None,
+        )
+
+    @app.post("/missions/{ticket}/prs/{repo}")
+    async def pr_action(ticket: str, repo: str, action: str = Form(...), target: str = Form(...)):
+        back = f"/missions/{ticket}/prs/{repo}"
+        try:
+            await service.pr_action(ticket, repo, action, target)
+        except (ValueError, RuntimeError, KeyError) as error:
+            return RedirectResponse(f"{back}?{urlencode({'error': str(error)})}", status_code=303)
+        return RedirectResponse(f"{back}?{urlencode({'done': action})}", status_code=303)
+
     @app.post("/missions/{ticket}/chat")
     async def send_chat(ticket: str, role: str = Form(...), lane: str = Form(""), text: str = Form(...)):
         if text.strip():

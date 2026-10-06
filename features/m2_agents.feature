@@ -118,13 +118,34 @@ Feature: M2 real agents
     Then the verdict has no score and lists the failing check
     And the lane goes back to the coder
 
-  Scenario: An approved lane is pushed and opened as a PR
+  Scenario: A judged lane becomes a local PR with one commit and one description
     Given a local origin repo with a develop branch
     And the workspace prepared lane CODEC-1423 "Partial refunds"
-    When the publisher opens the lane's PR
+    And two steps committed code, the last describing the change as "Refunds can now be partial and carry an idempotency key."
+    When the publisher prepares the lane's local PR
+    Then the lane branch has one commit "CODEC-1423: Partial refunds" on top of develop
+    And the PR description says "Refunds can now be partial and carry an idempotency key." and lists no roles
+    And origin does not have the lane branch
+
+  Scenario: Pushing a local PR opens it on GitHub into the branch I pick
+    Given a local origin repo with a develop branch
+    And the workspace prepared lane CODEC-1423 "Partial refunds"
+    And two steps committed code, the last describing the change as "Refunds can now be partial."
+    And the publisher prepared the lane's local PR
+    When I push the local PR into release/2026.10
     Then origin has the lane branch
-    And gh was asked to open a PR from the lane branch into develop
-    And publishing again returns the same PR without a second gh pr create
+    And gh was asked to open a PR from the lane branch into release/2026.10
+    And pushing again returns the same PR without a second gh pr create
+
+  Scenario: Merging a local PR puts the change on a local branch and pushes nothing
+    Given a local origin repo with a develop branch
+    And the workspace prepared lane CODEC-1423 "Partial refunds"
+    And two steps committed code, the last describing the change as "Refunds can now be partial."
+    And the publisher prepared the lane's local PR
+    When I merge the local PR into develop locally
+    Then the clone's develop has src/refunds.ts
+    And origin's develop does not have src/refunds.ts
+    And merging it again is refused
 
   @live
   Scenario: A real Claude Code step ends with a structured handoff

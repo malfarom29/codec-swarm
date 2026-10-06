@@ -36,7 +36,9 @@ class LaneView(BaseModel):
     repo: str
     status: str = "not_started"  # not_started | running | waiting | pr_ready | failed
     gate: GateView | None = None
-    pr_url: str | None = None
+    pr_url: str | None = None  # the local PR, reviewed in the dashboard
+    pushed_url: str | None = None  # the GitHub PR, once I pushed it
+    merged_into: str | None = None  # the local branch I merged it into
     verdicts: list[dict] = []
     current_role: str | None = None
     after: list[str] = []
@@ -127,13 +129,19 @@ def mission_view(events: list[Event]) -> MissionView:
             stats.sent_back += bool(p.get("send_back"))
             if p.get("lane") == PLANNING:
                 view.planning_role = None
+        if e.kind == "pr.local" and (lane := _lane_of(p, view)):
+            view.lanes.setdefault(lane, LaneView(repo=lane)).pr_url = p.get("url")
+        elif e.kind == "pr.pushed" and p.get("lane"):
+            view.lanes.setdefault(p["lane"], LaneView(repo=p["lane"])).pushed_url = p.get("url")
+        elif e.kind == "pr.merged" and p.get("lane"):
+            view.lanes.setdefault(p["lane"], LaneView(repo=p["lane"])).merged_into = p.get("target")
         if e.kind == "mission.planned":
             view.planning_role = None
         elif e.kind == "mission.done":
             lane = _lane_of(p, view) or next((r for r, ln in view.lanes.items() if ln.status != "pr_ready"), None)
             if lane:
                 target = view.lanes.setdefault(lane, LaneView(repo=lane))
-                target.status, target.pr_url, target.current_role = "pr_ready", p.get("pr_url"), None
+                target.status, target.pr_url, target.current_role = "pr_ready", p.get("pr_url") or target.pr_url, None
                 open_gates.pop(lane, None)
     view.planning_gate = open_gates.pop(PLANNING, None)
     for repo, gate in open_gates.items():

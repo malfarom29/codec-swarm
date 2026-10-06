@@ -2,6 +2,7 @@
   <div class="what">
     <div><span class="id">{{ g.ticket }}</span> · <strong>{{ g.kind }} gate</strong>{% if g.lane %} · lane <span class="mono">{{ g.lane }}</span>{% endif %}{% if g.after %} · after {{ g.after }}{% endif %}</div>
     {% if titles is defined and titles.get(g.ticket) %}<div class="sub" style="margin:2px 0 0">{{ titles[g.ticket] }}</div>{% endif %}
+    {% if g.kind in ("pr", "review") and g.lane %}<div style="margin-top:4px"><a href="/missions/{{ g.ticket }}/prs/{{ g.lane }}">Review the local PR →</a> push it to GitHub or merge it locally from there</div>{% endif %}
     {% if g.verdict %}
     {% set failed = g.verdict.get("failed_checks") or [] %}
     <div class="verdict">judge {{ g.verdict.get("source") }} · {% if g.verdict.get("score") is not none %}score {{ "%.2f" | format(g.verdict.score) }}{% else %}no score{% endif %} · {{ g.verdict.get("band") }} band{% if failed %} · <span style="color:var(--red)">failed: {{ failed | join(", ") }}</span>{% endif %}

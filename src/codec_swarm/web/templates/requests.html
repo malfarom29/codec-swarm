@@ -13,7 +13,7 @@
   </ol>
   {% if m.blocked %}<p class="bad">Stopped: {{ m.blocked }}</p>{% endif %}
   {% for g in m.open_gates %}<p class="ask">Waiting for you: approve the {{ "spec" if g.kind == "spec" else ("pull request" if g.kind == "pr" else g.kind ~ " step") }}{% if g.lane %} for {{ g.lane }}{% endif %}. <a href="/inbox">Open the inbox</a></p>{% endfor %}
-  {% for lane in m.lanes.values() if lane.pr_url %}<p>Pull request for {{ lane.repo }}: <a href="{{ lane.pr_url }}" target="_blank" rel="noopener">{{ lane.pr_url }}</a></p>{% endfor %}
+  {% for lane in m.lanes.values() if lane.pr_url %}<p>Change for {{ lane.repo }}: <a href="{{ lane.pr_url }}">review it</a>{% if lane.pushed_url %} · <a href="{{ lane.pushed_url }}" target="_blank" rel="noopener">on GitHub</a>{% endif %}{% if lane.merged_into %} · merged into {{ lane.merged_into }}{% endif %}</p>{% endfor %}
   {% if questions %}<details class="questions" {{ "open" if m.stage != "pr_ready" }}><summary><strong>Questions from the agents</strong> ({{ questions | length }})</summary><ul>{% for role, q in questions %}<li><span class="muted">{{ role }}:</span> {{ q }}</li>{% endfor %}</ul></details>{% endif %}
 </article>
 {% else %}<p class="empty">You haven't asked for anything yet. <a href="/missions/new">Start a mission</a>.</p>{% endfor %}

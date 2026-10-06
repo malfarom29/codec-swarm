@@ -26,7 +26,9 @@
     <div class="right">
       {% set tone = {"pr_ready": "", "waiting": "amber", "failed": "red", "running": "aqua"}.get(lane.status, "dim") %}
       <span class="pill {{ tone }}">{{ lane.status.replace("_", " ") }}{% if lane.gate %} · {{ lane.gate.kind }} gate{% endif %}</span>
-      {% if lane.pr_url %}<a href="{{ lane.pr_url }}" target="_blank" rel="noopener">PR</a>{% endif %}
+      {% if lane.pr_url %}<a href="{{ lane.pr_url }}" data-local-pr>Local PR</a>{% endif %}
+      {% if lane.pushed_url %}<a href="{{ lane.pushed_url }}" target="_blank" rel="noopener">GitHub</a>{% endif %}
+      {% if lane.merged_into %}<span class="pill">merged into {{ lane.merged_into }}</span>{% endif %}
     </div>
   </div>
   {% for g in [lane.gate] if lane.gate %}{% include "_gate.html" %}{% endfor %}

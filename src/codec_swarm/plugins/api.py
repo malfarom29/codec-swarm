@@ -49,9 +49,13 @@ class HandoffRecorder(Protocol):
 
 
 class Publisher(Protocol):
-    """Pushes an approved lane and opens its PR; returns the PR URL. Must be safe to call twice."""
+    """Turns a judged lane into a local PR (one squashed commit and a description); returns where to review it.
 
-    def publish(self, mission: Mission, handoffs: list[Handoff], verdict: dict[str, Any] | None) -> str: ...
+    Nothing leaves the machine here: pushing to GitHub or merging happens only when I choose it on the local PR.
+    Must be safe to call twice.
+    """
+
+    def prepare(self, mission: Mission, handoffs: list[Handoff], verdict: dict[str, Any] | None) -> str: ...
 
 
 class ChatInbox(Protocol):

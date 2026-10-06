@@ -35,10 +35,17 @@ HANDOFF_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "Conventional Commits message for your code changes, or an empty string if you changed no files.",
         },
+        "change_summary": {
+            "type": "string",
+            "description": (
+                "For the pull request: what this lane's change does and why, as one plain description a reviewer reads. "
+                "Describe the whole change so far, not what you or other roles did. Empty if no code has changed yet."
+            ),
+        },
         "files_touched": {"type": "array", "items": {"type": "string"}},
         "questions": {"type": "array", "items": {"type": "string"}, "description": "Questions for a human."},
     },
-    "required": ["summary", "send_back", "commit_message", "files_touched", "questions"],
+    "required": ["summary", "send_back", "commit_message", "change_summary", "files_touched", "questions"],
     "additionalProperties": False,
 }
 LANE_ORDER_FIELD: dict[str, Any] = {

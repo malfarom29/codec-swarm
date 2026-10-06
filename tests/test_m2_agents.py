@@ -300,13 +300,45 @@ class FakeGh:
         raise AssertionError(f"unexpected command {argv}")
 
 
-@when("the publisher opens the lane's PR")
-def publishes(world):
+@given(parsers.parse('two steps committed code, the last describing the change as "{summary}"'))
+def two_steps(world, summary):
+    lane = world["lane"]
+    (lane.path / "src").mkdir(exist_ok=True)
+    (lane.path / "src" / "refunds.ts").write_text("export const refund = () => {};\n")
+    first = Handoff(from_role="backend-coder", summary="Added refund().", commit_message="feat(refunds): add refund", files_touched=("src/refunds.ts",))
+    world["workspace"].record_handoff(lane, 1, first, "reviewer")
+    (lane.path / "src" / "refunds.ts").write_text("export const refund = (key: string) => key;\n")
+    second = Handoff(from_role="hardener", summary="Added the key.", commit_message="feat(refunds): idempotency key", change_summary=summary, files_touched=("src/refunds.ts",))
+    world["workspace"].record_handoff(lane, 2, second, "qa")
+    world["handoffs"] = [first, second]
+
+
+@when("the publisher prepares the lane's local PR")
+@given("the publisher prepared the lane's local PR")
+def prepares(world):
     world["gh"] = FakeGh()
-    world["publisher"] = GitHubPublisher({("CODEC-1423", "codec-payment"): world["lane"]}, run=world["gh"])
+    world["publisher"] = GitHubPublisher({("CODEC-1423", "codec-payment"): world["lane"]}, run=world["gh"], record_dir=world["workspace"].record_dir)
     world["mission"] = Mission(ticket="CODEC-1423", repo="codec-payment", title="Partial refunds")
-    handoffs = [Handoff(from_role="backend-coder", summary="Added POST /refunds.")]
-    world["pr_url"] = world["publisher"].publish(world["mission"], handoffs, {"source": "checks-only", "band": "review", "rationale": "unit: pass"})
+    world["pr_url"] = world["publisher"].prepare(world["mission"], world["handoffs"], {"source": "checks-only", "band": "approve", "rationale": "unit: pass"})
+    world["pr"], world["body"] = world["publisher"].load("CODEC-1423", "codec-payment")
+
+
+@then(parsers.parse('the lane branch has one commit "{subject}" on top of develop'))
+def one_commit(world, subject):
+    path = world["lane"].path
+    assert git(path, "rev-list", "--count", "origin/develop..HEAD") == "1"
+    assert git(path, "log", "-1", "--format=%s") == subject
+
+
+@then(parsers.parse('the PR description says "{text}" and lists no roles'))
+def description(world, text):
+    assert text in world["body"] and "## What changed" in world["body"]
+    assert "backend-coder" not in world["body"] and "hardener" not in world["body"]
+
+
+@then("origin does not have the lane branch")
+def origin_lacks_branch(world):
+    assert not git(world["tmp"] / "origin.git", "branch", "--list", world["lane"].branch)
 
 
 @then("origin has the lane branch")
@@ -314,19 +346,47 @@ def origin_has_branch(world):
     assert git(world["tmp"] / "origin.git", "branch", "--list", world["lane"].branch)
 
 
-@then("gh was asked to open a PR from the lane branch into develop")
-def gh_create_args(world):
+@when(parsers.parse("I push the local PR into {target}"))
+def push_pr(world, target):
+    world["pushed"] = world["publisher"].open_on_github(world["pr"], target)
+
+
+@then(parsers.parse("gh was asked to open a PR from the lane branch into {target}"))
+def gh_create_args(world, target):
     create = next(c for c in world["gh"].calls if c[:3] == ["gh", "pr", "create"])
-    assert create[create.index("--base") + 1] == "develop"
+    assert create[create.index("--base") + 1] == target
     assert create[create.index("--head") + 1] == world["lane"].branch
     assert create[create.index("--title") + 1] == "CODEC-1423: Partial refunds"
 
 
-@then("publishing again returns the same PR without a second gh pr create")
+@then("pushing again returns the same PR without a second gh pr create")
 def idempotent(world):
-    again = world["publisher"].publish(world["mission"], [], None)
-    assert again == world["pr_url"]
+    again = world["publisher"].open_on_github(world["pr"], "release/2026.10")
+    assert again == world["pushed"]
     assert sum(c[:3] == ["gh", "pr", "create"] for c in world["gh"].calls) == 1
+
+
+@when(parsers.parse("I merge the local PR into {target} locally"))
+def merge_pr(world, target):
+    world["merged"] = world["publisher"].merge_local(world["pr"], target)
+
+
+@then(parsers.parse("the clone's {branch} has {path}"))
+def clone_has(world, branch, path):
+    clone = world["workspace"].repos / "codec-payment"
+    assert path in git(clone, "ls-tree", "-r", "--name-only", branch).splitlines()
+
+
+@then(parsers.parse("origin's {branch} does not have {path}"))
+def origin_lacks(world, branch, path):
+    assert path not in git(world["tmp"] / "origin.git", "ls-tree", "-r", "--name-only", branch).splitlines()
+
+
+@then("merging it again is refused")
+def merge_twice(world):
+    pr, _ = world["publisher"].load("CODEC-1423", "codec-payment")
+    with pytest.raises(ValueError, match="Already merged"):
+        world["publisher"].merge_local(pr, "develop")
 
 
 # --- live Claude Code step -------------------------------------------------

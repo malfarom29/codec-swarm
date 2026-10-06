@@ -87,6 +87,7 @@ class Handoff(BaseModel, frozen=True, str_strip_whitespace=True):
     summary: str
     send_back: bool = False
     commit_message: str = ""  # Conventional Commits message for the step's code changes; the orchestrator commits
+    change_summary: str = ""  # the lane's change as a whole, for the PR description; the latest non-empty one wins
     incomplete: bool = False  # the step ended without a structured handoff, even after one retry
     lane_order: tuple[LaneOrder, ...] = ()  # only from the role that plans lanes
     files_touched: tuple[str, ...] = ()

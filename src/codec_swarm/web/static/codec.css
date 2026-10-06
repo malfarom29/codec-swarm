@@ -160,3 +160,12 @@ ol.plain li.now { color: var(--freq); font-weight: 600; } ol.plain li.now::befor
 .repocols h2:first-child { margin-top: 0; }
 .term.short { height: auto; max-height: 320px; }
 form.stack textarea { width: 100%; }
+.prform { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.prform label { flex: 0 1 260px; }
+.sendback { display: flex; gap: 8px; margin: -4px 0 14px; }
+.prcols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 20px; }
+.prcols h2 { margin-top: 0; }
+.prbody { white-space: pre-wrap; word-break: break-word; margin: 0; font: 13px/1.6 var(--sans); }
+.diff { background: #060a08; border-radius: 6px; padding: 10px 12px; font: 12px/1.5 var(--mono); overflow-x: auto; max-height: 70vh; overflow-y: auto; }
+.diff .add { color: var(--green); } .diff .del { color: var(--red); } .diff .hunk { color: var(--freq); } .diff .file { color: var(--fg); font-weight: 700; }
+@media (max-width: 760px) { .prcols { grid-template-columns: 1fr; } }

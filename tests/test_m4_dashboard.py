@@ -489,3 +489,71 @@ def refused(web, text):
 @then(parsers.parse("{name} has no local config file"))
 def no_local(web, name):
     assert not (web["service"].root / "repos.d" / f"{name}.yaml").exists()
+
+
+# --- local PRs --------------------------------------------------------------------
+
+
+@given(parsers.parse('mission {ticket} "{title}" has a local PR for {repo}'))
+def has_local_pr(web, ticket, title, repo):
+    from codec_swarm.domain import Handoff
+    from codec_swarm.harness.config import BranchFlow
+    from codec_swarm.workspace import Workspace
+    from codec_swarm.workspace.github import GitHubPublisher
+
+    seed = web["tmp"] / "seed"
+    seed.mkdir()
+    (seed / "README.md").write_text("# payments\n")
+    _git(seed, "init", "-q", "-b", "develop")
+    _git(seed, "add", ".")
+    _git(seed, "-c", "user.name=t", "-c", "user.email=t@l", "commit", "-qm", "init")
+    _git(web["tmp"], "clone", "-q", "--bare", str(seed), "origin.git")
+    service = web["service"]
+    workspace = Workspace(service.root)
+    lane = workspace.prepare_lane(str(web["tmp"] / "origin.git"), repo, ticket, title, BranchFlow(base="develop"))
+    (lane.path / "src").mkdir()
+    (lane.path / "src" / "refunds.ts").write_text("export const refund = () => {};\n")
+    handoff = Handoff(from_role="backend-coder", summary="done", commit_message="feat: refunds", change_summary="Refunds can now be partial.")
+    workspace.record_handoff(lane, 1, handoff, "reviewer")
+    mission = Mission(ticket=ticket, repo=repo, title=title)
+    url = GitHubPublisher({(ticket, repo): lane}, record_dir=workspace.record_dir).prepare(mission, [handoff], {"source": "checks-only", "band": "approve", "rationale": "unit: pass"})
+    request = _request(ticket, title, str(web["tmp"] / "origin.git"))
+    service.events.append(ticket, "mission.started", {"repos": [repo], "pack": "codec-standard", "request": request.model_dump(mode="json")})
+    service.events.append(ticket, "pr.local", {"lane": repo, "url": url})
+    service.events.append(ticket, "mission.done", {"lane": repo, "status": "pr_ready", "pr_url": url})
+
+
+@when(parsers.parse("I open the local PR of {ticket} for {repo}"))
+def open_local_pr(web, ticket, repo):
+    web["pr_path"] = f"/missions/{ticket}/prs/{repo}"
+    web["page"] = web["client"].get(web["pr_path"]).text
+
+
+@then(parsers.parse('it shows the description "{text}" and the diff of {path}'))
+def pr_shows(web, text, path):
+    page = web["page"]
+    assert text in page[page.index("data-description") :]
+    assert f"+++ b/{path}" in page[page.index("data-diff") :]
+
+
+@then(parsers.parse("the target branch defaults to {branch}"))
+def default_target(web, branch):
+    assert f'name="target" list="branches" value="{branch}"' in web["page"]
+
+
+@when(parsers.parse("I merge it locally into {branch} from the page"))
+def merge_from_page(web, branch):
+    response = web["client"].post(web["pr_path"], data={"action": "merge", "target": branch}, follow_redirects=False)
+    assert response.status_code == 303 and "done=merge" in response.headers["location"], response.headers["location"]
+
+
+@then(parsers.parse("the local PR says it was merged into {branch}"))
+def pr_merged(web, branch):
+    page = web["client"].get(web["pr_path"]).text
+    assert f"merged into {branch}" in page[page.index("data-merged") :]
+
+
+@then(parsers.parse("the mission page of {ticket} shows the lane merged into {branch}"))
+def mission_merged(web, ticket, branch):
+    page = web["client"].get(f"/missions/{ticket}").text
+    assert "data-local-pr" in page and f"merged into {branch}" in page

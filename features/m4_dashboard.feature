@@ -148,3 +148,13 @@ Feature: M4 dashboard
     When I save billing's local config as "stack: cobol"
     Then the save is refused with "Unknown stack 'cobol'"
     And billing has no local config file
+
+  Scenario: The local PR page shows the description and diff, and merges into the branch I pick
+    Given I am signed in
+    And mission CODEC-1720 "Partial refunds" has a local PR for codec-payment
+    When I open the local PR of CODEC-1720 for codec-payment
+    Then it shows the description "Refunds can now be partial." and the diff of src/refunds.ts
+    And the target branch defaults to develop
+    When I merge it locally into develop from the page
+    Then the local PR says it was merged into develop
+    And the mission page of CODEC-1720 shows the lane merged into develop
