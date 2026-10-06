@@ -122,6 +122,15 @@ def squash(lane: Lane, message: str) -> tuple[str, str | None, str | None]:
     base_sha = git(lane.path, "merge-base", f"origin/{lane.base}", "HEAD")
     head = git(lane.path, "rev-parse", "HEAD")
     count = int(git(lane.path, "rev-list", "--count", f"{base_sha}..HEAD"))
+    staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=lane.path).returncode != 0
+    if count == 0 and staged:
+        # No commits but the change is staged: an earlier squash moved the branch back and its commit was refused.
+        # Committing what is staged is that squash; if the hooks refuse it again, the change stays staged.
+        proc = subprocess.run(["git", *SWARM_IDENTITY, "commit", "--quiet", "-m", message], cwd=lane.path, capture_output=True, text=True)
+        if proc.returncode != 0:
+            output = "\n".join((proc.stdout + proc.stderr).strip().splitlines()[-15:])
+            return base_sha, None, f"The lane's change is staged but not committed, and the repo's hooks refused the commit:\n{output}"
+        return base_sha, git(lane.path, "rev-parse", "HEAD"), None
     if count == 0:
         return base_sha, None, None
     if count > 1 or git(lane.path, "log", "-1", "--format=%B", "HEAD").strip() != message.strip():
@@ -269,7 +278,7 @@ class GitHubPublisher:
         return merged
 
     def refresh(self, pr: LocalPR) -> LocalPR:
-        """After a rebase: the squashed commit moved, so point the local PR at it and its new base."""
+        """The branch moved (a rebase, a hand repair): point the local PR at its head and base again."""
         lane = pr.lane()
         base_sha = git(lane.path, "merge-base", f"origin/{lane.base}", "HEAD")
         sha = git(lane.path, "rev-parse", "HEAD") if base_sha != git(lane.path, "rev-parse", "HEAD") else None

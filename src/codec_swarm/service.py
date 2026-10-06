@@ -22,6 +22,7 @@ from codec_swarm.graph import APPROVE, SEND_BACK, MissionRunner
 from codec_swarm.graph.coordinator import MissionCoordinator, MissionResult, lane_thread
 from codec_swarm.graph.runner import forget_threads
 from codec_swarm.harness import BranchFlow, LocalOverrides, load_pack, load_repo_config, resolve_session
+from codec_swarm.harness.config import CommitRules
 from codec_swarm.plugins.claude_code import ClaudeCodeBackend
 from codec_swarm.plugins.checks import run_check
 from codec_swarm.plugins.gate import PerRepoGate
@@ -34,7 +35,7 @@ from codec_swarm.store.chat import ChatStore
 from codec_swarm.store.views import mission_view
 from codec_swarm.store.settings import JiraSettings, Settings
 from codec_swarm.workspace import Workspace, WorkspaceRecorder
-from codec_swarm.workspace.github import GitHubPublisher, LocalPR, merge_for_resolution, update_from_base
+from codec_swarm.workspace.github import GitHubPublisher, LocalPR, merge_for_resolution, squash, squash_message, update_from_base
 from codec_swarm.workspace.envs import DEFAULT_FILE as DEFAULT_ENV_FILE
 from codec_swarm.workspace.envs import FILE_NAME as ENV_FILE_NAME
 from codec_swarm.workspace.envs import RepoEnvs, write_env_file
@@ -274,6 +275,17 @@ class MissionService:
         lane, pr = self._lane(ticket, repo)
         result = await anyio.to_thread.run_sync(update_from_base, lane)
         if result.up_to_date:
+            if pr is not None and pr.sha is None and self.lane_state(pr):  # heal an interrupted squash
+                loaded = self.prs.load(ticket, repo)
+                body = loaded[1] if loaded else ""
+                changed = body.split("## What changed", 1)[-1].split("\n## ", 1)[0].split("<details>", 1)[0].strip() if "## What changed" in body else ""
+                messages = [e.payload.get("commit_message") or "" for e in self.events.list(ticket) if e.kind == "handoff" and e.payload.get("lane") == repo]
+                message = squash_message(self._commit_rules(repo), ticket, pr.title.split(": ", 1)[-1], changed, messages)
+                _, sha, error = await anyio.to_thread.run_sync(squash, lane, message)
+                await anyio.to_thread.run_sync(self.prs.refresh, pr)
+                if error:
+                    return error
+                return f"{repo} already had everything from {lane.base}; committed its staged change as {sha[:8]}."
             return f"{repo} already has everything from {lane.base}."
         if result.ok:
             if pr is not None:
@@ -293,6 +305,12 @@ class MissionService:
             return f"Sent {repo} back to the coder to resolve conflicts in {files}."
         self.events.append(ticket, "lane.conflict", {"lane": repo, "files": result.conflicts})
         return f"{lane.base} conflicts with {repo} in {files}; nothing was changed."
+
+    def _commit_rules(self, repo: str) -> CommitRules:
+        try:
+            return load_repo_config(self._workspace.repos / repo, load_pack("codec-standard"), local_dir=self.repos.local_dir).commit
+        except Exception:
+            return CommitRules()
 
     def _lane(self, ticket: str, repo: str) -> tuple[Lane, LocalPR | None]:
         loaded = self.local_pr(ticket, repo)
@@ -331,7 +349,27 @@ class MissionService:
         return GitHubPublisher({}, record_dir=self._workspace.record_dir)
 
     def local_pr(self, ticket: str, repo: str) -> tuple[LocalPR, str] | None:
-        return self.prs.load(ticket, repo)
+        """The lane's local PR, re-pointed at its branch if the branch moved since it was written."""
+        loaded = self.prs.load(ticket, repo)
+        if loaded is None:
+            return None
+        pr, body = loaded
+        if (pr.path / ".git").exists() and not self.is_busy(ticket):
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=pr.path, capture_output=True, text=True).stdout.strip()
+            if head and head != pr.sha and not (pr.sha is None and head == pr.base_sha):
+                pr = self.prs.refresh(pr)
+        return pr, body
+
+    def lane_state(self, pr: LocalPR) -> str | None:
+        """Why a local PR has nothing to push or merge, in words, or None when it does."""
+        if pr.sha is not None or not (pr.path / ".git").exists():
+            return None
+        staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=pr.path, capture_output=True, text=True).stdout.split()
+        if staged:
+            return (f"The branch has no commits on top of {pr.base}, but {len(staged)} changed file"
+                    f"{'s are' if len(staged) != 1 else ' is'} staged in the worktree: an earlier squash was interrupted. "
+                    "Update from base commits them as the squash, through the repo's hooks.")
+        return f"The branch has no commits on top of {pr.base}: this lane changed nothing to push or merge."
 
     async def pr_action(self, ticket: str, repo: str, action: str, target: str) -> str:
         """Push the local PR to GitHub or merge it locally, into target; then approve its open PR or review gate.

@@ -102,3 +102,26 @@ def test_after_two_rejections_the_handoff_gate_asks_me(tmp_path):
     backend, _, result = _lane_run(tmp_path, times=5)
     assert backend.calls.count("backend-coder") == 2
     assert result.gate["kind"] == "handoff"
+
+
+def test_a_change_left_staged_by_an_interrupted_squash_is_committed_as_the_squash(tmp_path):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "a.txt").write_text("a\n")
+    _git(seed, "init", "-q", "-b", "develop")
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-qm", "init")
+    _git(tmp_path, "clone", "-q", "--bare", str(seed), "origin.git")
+    workspace = Workspace(tmp_path / "root")
+    lane = workspace.prepare_lane(str(tmp_path / "origin.git"), "app", "T-2", "t", BranchFlow(base="develop"))
+    (lane.path / "b.txt").write_text("b\n")
+    h = Handoff(from_role="backend-coder", summary="x", commit_message="feat(app): add b", change_summary="Adds b.")
+    workspace.record_handoff(lane, 1, h, "reviewer")
+    _git(lane.path, "reset", "--soft", "origin/develop")  # what the old squash left behind: branch at base, change staged
+    publisher = GitHubPublisher({("T-2", "app"): lane}, record_dir=workspace.record_dir)
+    publisher.prepare(Mission(ticket="T-2", repo="app", title="Add b"), [h], None)
+    pr, _ = publisher.load("T-2", "app")
+    assert pr.sha and pr.squash_error is None
+    assert _git(lane.path, "log", "-1", "--format=%s") == "feat: Add b"
+    assert _git(lane.path, "diff", "--cached", "--name-only") == ""
+    assert "b.txt" in _git(lane.path, "show", "--name-only", "--format=", "HEAD")

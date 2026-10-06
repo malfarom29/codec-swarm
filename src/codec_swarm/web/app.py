@@ -503,6 +503,7 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
             request, "pr.html", m=view, pr=pr, body=body, lane=lane, stat=stat, diff_lines=diff.splitlines(),
             branches=service.prs.branches(pr), verdict=verdicts[-1] if verdicts else None, error=error, done=done, target=target,
             gate=lane.gate if lane and lane.gate and lane.gate.kind in ("pr", "review") else None, busy=busy(ticket),
+            nothing=service.lane_state(pr),
         )
 
     @app.post("/missions/{ticket}/prs/{repo}")
