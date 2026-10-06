@@ -719,3 +719,129 @@ def stored_names_only(web, key):
     assert request.env_overrides == {web["repo"]: [key]}
     dump = "\n".join(sqlite3.connect(web["service"].db).iterdump())
     assert web["override"] not in dump
+
+
+# --- restart and update from base -----------------------------------------------------
+
+
+@when(parsers.parse("I restart {ticket} from its page"))
+def restart_page(web, ticket):
+    web["old_backend"] = getattr(web["service"], "backend", None)
+    web["response"] = web["client"].post(f"/missions/{ticket}/restart", follow_redirects=False)
+
+
+@then(parsers.parse("{ticket} is on its second run, waiting at the spec gate"))
+def second_run(web, ticket):
+    view = web["service"].events.list(ticket)
+    from codec_swarm.store.views import mission_view
+
+    m = mission_view(view)
+    assert m.runs == 2 and m.planning_gate is not None and m.planning_gate.kind == "spec"
+    assert not any(lane.gate for lane in m.lanes.values())
+
+
+@then("the specifier ran again")
+def specifier_again(web):
+    backend = web["service"].backend
+    assert backend is not web["old_backend"] and backend.calls[0] == "specifier"
+
+
+@when(parsers.parse("I open the restart form of {ticket}"))
+def restart_form(web, ticket):
+    web["page"] = web["client"].get(f"/missions/{ticket}/restart").text
+
+
+@then(parsers.parse('it is filled with the title "{title}"'))
+def filled_title(web, title):
+    assert f'value="{title}"' in web["page"] and 'name="restart" value="1"' in web["page"]
+
+
+@when(parsers.parse('I restart {ticket} with the title "{title}"'))
+def restart_with_title(web, ticket, title):
+    form = {"ticket": ticket, "title": title, "repo_urls": "codec-swarm-sandbox", "pack": "codec-standard", "restart": "1"}
+    assert web["client"].post("/missions", data=form, follow_redirects=False).status_code == 303
+
+
+@then(parsers.parse('mission {ticket} now has the title "{title}"'))
+def now_titled(web, ticket, title):
+    request, _ = web["service"].stored_request(ticket)
+    assert request.title == title, [(e.kind, e.payload.get("error")) for e in web["service"].events.list(ticket)][-6:]
+
+
+@given(parsers.parse("{ticket} is in the middle of a step"))
+def busy(web, ticket, monkeypatch):
+    monkeypatch.setattr(web["service"], "is_busy", lambda t: t == ticket)
+
+
+@then(parsers.parse('the mission page says "{text}"'))
+def mission_says(web, text):
+    location = web["response"].headers["location"]
+    assert web["response"].status_code == 303 and "error=" in location
+    assert text in web["client"].get(location).text
+
+
+@given(parsers.parse('{repo}\'s checks are "{command}"'))
+def repo_checks(web, repo, command):
+    folder = web["service"].root / "repos.d"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{repo}.yaml").write_text(f"stack: python\nbranch_flow:\n  base: develop\nchecks:\n  - id: unit\n    run: {command}\n")
+
+
+def _push_to_develop(web, path, text):
+    work = web["tmp"] / "upstream"
+    if not work.exists():
+        _git(web["tmp"], "clone", "-q", "-b", "develop", str(web["tmp"] / "origin.git"), "upstream")
+    target = work / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+    _git(work, "add", ".")
+    _git(work, "-c", "user.name=t", "-c", "user.email=t@l", "commit", "-qm", f"add {path}")
+    _git(work, "push", "-q", "origin", "develop")
+
+
+@given("origin's develop gets a new commit adding docs/CHANGELOG.md")
+def upstream_commit(web):
+    _push_to_develop(web, "docs/CHANGELOG.md", "# changes\n")
+
+
+@given("origin's develop gets a conflicting src/refunds.ts")
+def upstream_conflict(web):
+    _push_to_develop(web, "src/refunds.ts", "export const refund = () => 'theirs';\n")
+
+
+@when(parsers.parse("I update {repo} of {ticket} from its base"))
+def update_lane(web, repo, ticket):
+    web["pr_before"] = web["service"].local_pr(ticket, repo)[0]
+    response = web["client"].post(f"/missions/{ticket}/lanes/{repo}/update", data={}, follow_redirects=False)
+    assert response.status_code == 303 and "error=" not in response.headers["location"], response.headers["location"]
+
+
+@then(parsers.parse("the local PR of {ticket} for {repo} sits on the new develop with one commit"))
+def rebased_pr(web, ticket, repo):
+    import subprocess
+
+    pr = web["service"].local_pr(ticket, repo)[0]
+    develop = subprocess.run(["git", "rev-parse", "origin/develop"], cwd=pr.path, capture_output=True, text=True).stdout.strip()
+    assert pr.base_sha == develop and pr.base_sha != web["pr_before"].base_sha
+    assert subprocess.run(["git", "rev-list", "--count", f"{develop}..HEAD"], cwd=pr.path, capture_output=True, text=True).stdout.strip() == "1"
+    assert (pr.path / "docs" / "CHANGELOG.md").exists()
+
+
+@then(parsers.parse("the activity of {ticket} says the checks pass"))
+def checks_pass(web, ticket):
+    assert "checks pass" in web["client"].get(f"/missions/{ticket}").text
+
+
+@then(parsers.parse("the activity of {ticket} says it conflicts in {path}"))
+def says_conflict(web, ticket, path):
+    assert f"conflicts with codec-payment in {path}; nothing was changed" in web["client"].get(f"/missions/{ticket}").text
+
+
+@then(parsers.parse("the local PR of {ticket} for {repo} is unchanged"))
+def pr_unchanged(web, ticket, repo):
+    import subprocess
+
+    pr = web["service"].local_pr(ticket, repo)[0]
+    assert pr.sha == web["pr_before"].sha
+    assert subprocess.run(["git", "rev-parse", "HEAD"], cwd=pr.path, capture_output=True, text=True).stdout.strip() == pr.sha
+    assert subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=pr.path, capture_output=True, text=True).stdout == ""

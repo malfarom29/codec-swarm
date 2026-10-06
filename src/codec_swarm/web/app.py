@@ -62,6 +62,10 @@ def _line(e: Event) -> str | None:
     if e.kind == "gate.resolved":
         note = f" · “{p['note'][:160]}”" if p.get("note") else ""
         return f"{lane}{p.get('kind')} gate: {p.get('answer')}{note}"
+    if e.kind == "mission.restarted":
+        return "mission restarted from the first role; earlier work was set aside"
+    if e.kind == "lane.update":  # one line per update from base: up to date, rebased and checked, or conflicting
+        return f"{lane}{p.get('message')}"
     if e.kind == "env.note":
         return f"{lane}environment: {p.get('note')}"
     if e.kind == "decision" and p.get("source") == "jev":
@@ -107,6 +111,10 @@ def notification(e: Event) -> dict[str, str] | None:
         return {"kind": "input", "title": where, "body": what, "url": f"/missions/{e.mission}/prs/{lane}" if kind in ("pr", "review") and lane else "/inbox"}
     if e.kind in ("mission.blocked", "mission.error", "lane.failed"):
         return {"kind": "input", "title": where, "body": "stopped: " + str(e.payload.get("reason") or e.payload.get("error") or "needs a look")[:140], "url": f"/missions/{e.mission}"}
+    if e.kind == "lane.conflict" and not e.payload.get("sent_to"):
+        return {"kind": "input", "title": where, "body": "conflicts with its base branch", "url": f"/missions/{e.mission}"}
+    if e.kind == "lane.rechecked" and not e.payload.get("passed"):
+        return {"kind": "input", "title": where, "body": "checks fail after the update from base", "url": f"/missions/{e.mission}"}
     if e.kind == "mission.done" and e.payload.get("pr_url"):
         return {"kind": "done", "title": where, "body": "PR ready", "url": e.payload["pr_url"]}
     return None
@@ -278,7 +286,7 @@ def create_app(service: MissionService, token: str) -> FastAPI:
                 for role in roles
             ]))
         stages = [s for s in STAGES if s[0] != "intake"]
-        return {"m": view, "activity": activity, "groups": groups, "stages": stages, "stage_index": stage_index}
+        return {"m": view, "activity": activity, "groups": groups, "stages": stages, "stage_index": stage_index, "busy": service.is_busy(ticket)}
 
     @app.get("/missions/new", response_class=HTMLResponse)
     async def new_mission(request: Request, ticket: str = "", title: str = "", description: str = "", repo_urls: str = ""):
@@ -305,10 +313,10 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         return render(request, "_bases.html", rows=base_rows(repo_urls))
 
     @app.get("/missions/{ticket}", response_class=HTMLResponse)
-    async def mission(request: Request, ticket: str):
+    async def mission(request: Request, ticket: str, error: str = "", notice: str = ""):
         if not service.events.list(ticket):
             return PlainTextResponse(f"No mission {ticket}", status_code=404)
-        return render(request, "mission.html", **mission_context(ticket))
+        return render(request, "mission.html", error=error, notice=notice, **mission_context(ticket))
 
     @app.get("/partials/missions/{ticket}", response_class=HTMLResponse)
     async def mission_partial(request: Request, ticket: str):
@@ -394,6 +402,8 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         form = await request_.form()
         chosen = {k.removeprefix("base:"): str(v).strip() for k, v in form.items() if k.startswith("base:") and str(v).strip()}
         env_text = {k.removeprefix("env:"): str(v) for k, v in form.items() if k.startswith("env:") and str(v).strip()}
+        if form.get("restart"):
+            service.envs.drop_overrides(ticket.strip())  # a restart with changes takes only the overrides in this form
         rows = base_rows(repo_urls, chosen)
         unknown = [f"{r['name']} has no branch {r['value']!r} on origin" for r in rows if r["branches"] and r["value"] and r["value"] not in r["branches"]]
         for repo, text in env_text.items():
@@ -413,7 +423,12 @@ def create_app(service: MissionService, token: str) -> FastAPI:
             bases={r["name"]: r["value"] for r in rows if r["value"] and r["value"] != r["configured"]},
             env_overrides={repo: service.envs.set_overrides(ticket.strip(), repo, text) for repo, text in env_text.items() if repo in {r["name"] for r in rows}},
         )
-        background.add_task(in_background, request.ticket, lambda: service.start(request))
+        if form.get("restart"):
+            if (refused := busy_redirect(request.ticket)) is not None:
+                return refused
+            background.add_task(in_background, request.ticket, lambda: service.restart(request.ticket, request))
+        else:
+            background.add_task(in_background, request.ticket, lambda: service.start(request))
         return RedirectResponse(f"/missions/{request.ticket}", status_code=303)
 
     @app.post("/harness/{pack}/{role}")
@@ -462,6 +477,49 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         except (ValueError, RuntimeError, KeyError) as error:
             return RedirectResponse(f"{back}?{urlencode({'error': str(error), 'target': target})}", status_code=303)
         return RedirectResponse(f"{back}?{urlencode({'done': action})}", status_code=303)
+
+    def busy_redirect(ticket: str) -> RedirectResponse | None:
+        if service.is_busy(ticket):
+            message = f"{ticket} is working right now; try again once it waits at a gate or stops."
+            return RedirectResponse(f"/missions/{ticket}?{urlencode({'error': message})}", status_code=303)
+        return None
+
+    @app.post("/missions/{ticket}/resume")
+    async def resume_mission(background: BackgroundTasks, ticket: str):
+        if (refused := busy_redirect(ticket)) is not None:
+            return refused
+        background.add_task(in_background, ticket, lambda: service.recover(ticket))
+        return RedirectResponse(f"/missions/{ticket}?{urlencode({'notice': 'Resuming from the last checkpoint.'})}", status_code=303)
+
+    @app.post("/missions/{ticket}/restart")
+    async def restart_mission(background: BackgroundTasks, ticket: str):
+        if (refused := busy_redirect(ticket)) is not None:
+            return refused
+        background.add_task(in_background, ticket, lambda: service.restart(ticket))
+        return RedirectResponse(f"/missions/{ticket}?{urlencode({'notice': 'Restarting from the first role.'})}", status_code=303)
+
+    @app.get("/missions/{ticket}/restart", response_class=HTMLResponse)
+    async def restart_form(request: Request, ticket: str):
+        stored = service.stored_request(ticket)
+        if stored is None:
+            return PlainTextResponse(f"No mission {ticket}", status_code=404)
+        r = stored[0]
+        prefill = {"ticket": r.ticket, "title": r.title, "description": r.description, "repo_urls": "\n".join(r.repo_urls),
+                   "autonomy": r.autonomy.value, "pack": r.pack, "model": r.model or "", "restart": True}
+        return render(request, "new_mission.html", prefill=prefill, rows=base_rows(prefill["repo_urls"], r.bases), error="")
+
+    @app.post("/missions/{ticket}/lanes/{repo}/update")
+    async def update_lane(background: BackgroundTasks, ticket: str, repo: str, resolve: str = Form(""), back: str = Form("")):
+        if (refused := busy_redirect(ticket)) is not None:
+            return refused
+
+        async def work() -> None:
+            message = await service.update_from_base(ticket, repo, resolve_with_coder=bool(resolve))
+            service.events.append(ticket, "lane.update", {"lane": repo, "message": message})
+
+        background.add_task(in_background, ticket, work)
+        target = back if back.startswith("/") else f"/missions/{ticket}"
+        return RedirectResponse(f"{target}?{urlencode({'notice': f'Updating {repo} from its base; the result shows in Activity.'})}", status_code=303)
 
     @app.post("/missions/{ticket}/chat")
     async def send_chat(ticket: str, role: str = Form(...), lane: str = Form(""), text: str = Form(...)):

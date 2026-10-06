@@ -72,6 +72,8 @@ class MissionView(BaseModel):
     planning_role: str | None = None  # the planning role working right now, if any
     blocked: str | None = None
     cost_usd: float = 0.0
+    earlier_cost_usd: float = 0.0  # what runs before the last restart cost
+    runs: int = 1
     started_at: str = ""
     last_event_id: int = 0
 
@@ -88,6 +90,9 @@ def mission_view(events: list[Event]) -> MissionView:
     open_gates: dict[str, GateView] = {}
     for e in events:
         p = e.payload
+        if e.kind == "mission.restarted":  # what came before belongs to an earlier run
+            view = MissionView(ticket=view.ticket, started_at=e.created_at, earlier_cost_usd=view.earlier_cost_usd + view.cost_usd, runs=view.runs + 1)
+            open_gates = {}
         view.last_event_id = e.id
         if e.kind == "mission.started":
             request = p.get("request") or {}

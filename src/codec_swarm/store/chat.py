@@ -51,6 +51,10 @@ class ChatStore:
                 )
         return rows
 
+    def forget_pending(self, ticket: str) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM chat WHERE ticket = ? AND delivered_at IS NULL", (ticket,))
+
     def list(self, ticket: str, lane: str | None = None, role: str | None = None, pending_only: bool = False) -> list[ChatMessage]:
         query, params = "SELECT id, ticket, lane, role, text, created_at, delivered_at FROM chat WHERE ticket = ?", [ticket]
         if lane is not None:

@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% block title %}New mission · codec-swarm{% endblock %}
 {% block main %}
-<h1>New mission</h1>
+<h1>{{ "Restart " ~ prefill.ticket if prefill.restart else "New mission" }}</h1>
 <p class="sub">One ticket, one or more repos. With more than one repo, the Architect orders the lanes.</p>
 {% if error %}<div class="panel note bad" data-error>{{ error }}</div>{% endif %}
 <form method="post" action="/missions" class="stack">
+  {% if prefill.restart %}<input type="hidden" name="restart" value="1"><p class="ask">Starting this sets aside {{ prefill.ticket }}'s worktrees, local branches, local PRs and agent sessions, then runs it again with what you change here.</p>{% endif %}
   <div class="row2">
-    <label>Ticket <input name="ticket" id="nm-ticket" required placeholder="CODEC-1" value="{{ prefill.ticket }}"></label>
+    <label>Ticket <input name="ticket" id="nm-ticket" required placeholder="CODEC-1" value="{{ prefill.ticket }}" {{ "readonly" if prefill.restart }}></label>
     <label>Autonomy
-      <select name="autonomy" id="nm-autonomy"><option value="gated">Gated</option><option value="auto">Auto</option><option value="manual">Manual</option></select>
+      <select name="autonomy" id="nm-autonomy">{% for v, label in [("gated", "Gated"), ("auto", "Auto"), ("manual", "Manual")] %}<option value="{{ v }}" {{ "selected" if prefill.autonomy == v }}>{{ label }}</option>{% endfor %}</select>
     </label>
   </div>
   <label>Title <input name="title" id="nm-title" required value="{{ prefill.title }}"></label>
@@ -18,11 +19,11 @@
   <div id="nm-bases">{% include "_bases.html" %}</div>
   <div class="row2">
     <label>Pack
-      <select name="pack" id="nm-pack"><option value="auto">Auto (rule, or Jev)</option><option value="codec-standard">Codec standard</option><option value="solo">Solo</option></select>
+      <select name="pack" id="nm-pack">{% for v, label in [("auto", "Auto (rule, or Jev)"), ("codec-standard", "Codec standard"), ("solo", "Solo")] %}<option value="{{ v }}" {{ "selected" if prefill.pack == v }}>{{ label }}</option>{% endfor %}</select>
     </label>
-    <label>Force a model (optional) <input name="model" id="nm-model" placeholder="haiku, sonnet or opus"></label>
+    <label>Force a model (optional) <input name="model" id="nm-model" placeholder="haiku, sonnet or opus" value="{{ prefill.model }}"></label>
   </div>
   <label class="check"><input type="checkbox" name="jev" id="nm-jev" value="on" {{ "checked" if jev_on else "disabled" }}> Use Jev for this mission{% if not jev_on %} (no TYPESAFE_API_KEY){% endif %}</label>
-  <div><button class="primary" type="submit">Start mission</button></div>
+  <div><button class="primary" type="submit">{{ "Restart mission" if prefill.restart else "Start mission" }}</button></div>
 </form>
 {% endblock %}

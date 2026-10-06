@@ -43,5 +43,10 @@ class SessionStore:
                 (ticket, repo, role, session_id, model, turns, cost_usd),
             )
 
+    def forget(self, ticket: str) -> None:
+        """Drop a mission's sessions, so a restart begins new conversations instead of resuming the old ones."""
+        with self._conn:
+            self._conn.execute("DELETE FROM sessions WHERE ticket = ?", (ticket,))
+
     def close(self) -> None:
         self._conn.close()

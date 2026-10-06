@@ -25,6 +25,12 @@
   <button name="action" value="merge" {{ "disabled" if not pr.sha or pr.merged_into }}>Merge locally</button>
   <span class="muted">Started from <span class="mono">{{ pr.base }}</span>. Merging stays on this machine; pushing opens the PR with the description below.</span>
 </form>
+<form method="post" action="/missions/{{ m.ticket }}/lanes/{{ pr.repo }}/update" class="updateform">
+  <input type="hidden" name="back" value="/missions/{{ m.ticket }}">
+  <button>Update from {{ pr.base }}</button>
+  {% if gate %}<label class="check"><input type="checkbox" name="resolve" value="coder" checked> if it conflicts, send it to the coder to resolve</label>{% endif %}
+  <span class="muted">Rebases on the newest {{ pr.base }} and reruns the checks; a conflict changes nothing{% if gate %} unless the coder takes it{% endif %}.</span>
+</form>
 {% if gate %}
 <form method="post" action="/missions/{{ m.ticket }}/gates" class="sendback">
   <input type="hidden" name="lane" value="{{ pr.repo }}"><input type="hidden" name="back" value="/missions/{{ m.ticket }}">

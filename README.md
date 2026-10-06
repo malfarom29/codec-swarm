@@ -65,6 +65,17 @@ uv run codec-swarm up           # dashboard on http://127.0.0.1:8765
 
    You can also **Send back** the lane.
 
+**Mission controls.** The mission page header has:
+- **Resume:** continue from the last checkpoint, for example after an error or a server restart.
+- **Restart:** set the mission's worktrees, local branches, local PRs and agent sessions aside, then run it again from the first role. Pushed branches are kept. Earlier runs' handoffs stay in `~/.codec-swarm/missions/<ticket>.runN/`.
+- **Restart with changes:** the same, starting from the mission's form so you can edit it first.
+
+**Update from base.** Each lane can be rebased onto the newest commit of its base branch:
+- Clean rebase: the local PR is rewritten and the repo's checks run again.
+- Conflict: nothing changes and the conflicting files are listed. If the lane is waiting at its PR or review gate, you can instead send the conflicts to the coder. The base branch is merged in with conflict markers left in place, and the coder is told to resolve them; the orchestrator commits the merge.
+
+Neither works while a step is running.
+
 **My requests** gives the same progress in plain steps, with any questions the agents asked you.
 
 ### From the terminal

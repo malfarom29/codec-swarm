@@ -35,6 +35,15 @@ class MissionExists(RuntimeError):
     """The ticket already has a mission in the checkpointer; answer or recover it instead."""
 
 
+async def forget_threads(db_path: Path, threads: list[str]) -> None:
+    """Delete these threads' checkpoints, so a restarted mission begins again from its first role."""
+    async with aiosqlite.connect(str(Path(db_path).with_suffix(".checkpoints.db")), timeout=SQLITE_TIMEOUT_S) as conn:
+        saver = AsyncSqliteSaver(conn)
+        await saver.setup()
+        for thread in threads:
+            await saver.adelete_thread(thread)
+
+
 class MissionRunner:
     """One graph definition; every call opens the checkpointer, so a new runner can pick up any mission."""
 

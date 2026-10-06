@@ -2,6 +2,7 @@
 {% block title %}{{ m.ticket }} · codec-swarm{% endblock %}
 {% block main %}
 <p><a href="/">← Missions</a></p>
+{% if error %}<div class="panel note bad" data-error>{{ error }}</div>{% elif notice %}<div class="panel note" data-notice>{{ notice }}</div>{% endif %}
 <div x-data="{ tab: new URLSearchParams(location.search).get('tab') || 'activity' }">
   <div hx-get="/partials/missions/{{ m.ticket }}" hx-trigger="codec:change from:body" hx-swap="innerHTML">{% include "_mission.html" %}</div>
 </div>

@@ -56,6 +56,31 @@ class Workspace:
         """Holds every lane worktree of a mission; planning roles work here so they can write each repo's spec."""
         return self.worktrees / ticket
 
+    def discard(self, ticket: str) -> list[str]:
+        """Remove a mission's worktrees and their local branches, and set its record aside. Returns what it removed.
+
+        Remote branches are left alone: a pushed PR is updated by the next push of the same branch.
+        """
+        removed = []
+        folder = self.worktrees / ticket
+        for worktree in sorted(folder.iterdir()) if folder.is_dir() else []:
+            if not (worktree / ".git").exists():
+                continue
+            clone = self.repos / worktree.name
+            branch = subprocess.run(["git", "branch", "--show-current"], cwd=worktree, capture_output=True, text=True).stdout.strip()
+            subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=clone, capture_output=True)
+            if branch:
+                subprocess.run(["git", "branch", "-D", branch], cwd=clone, capture_output=True)
+            removed.append(f"{worktree.name}:{branch}")
+        shutil.rmtree(folder, ignore_errors=True)
+        record = self.missions / ticket
+        if record.exists():
+            stamp = 1
+            while (self.missions / f"{ticket}.run{stamp}").exists():
+                stamp += 1
+            record.rename(self.missions / f"{ticket}.run{stamp}")  # earlier runs' handoffs and specs stay readable
+        return removed
+
     def clone(self, origin: str, name: str) -> Path:
         """Clone once, then fetch before each mission."""
         path = self.repos / name

@@ -234,3 +234,43 @@ Feature: M4 dashboard
     When I start mission CODEC-1770 on billing overriding DATABASE_URL with "postgres://localhost/billing_test"
     Then billing's lane in CODEC-1770 gets DATABASE_URL "postgres://localhost/billing_test"
     And the mission's stored request names DATABASE_URL but not its value
+
+  Scenario: Restarting a mission runs it again from the first role
+    Given I am signed in
+    And mission CODEC-1780 "Add from_cents" on codec-swarm-sandbox is waiting at its pr gate
+    When I restart CODEC-1780 from its page
+    Then CODEC-1780 is on its second run, waiting at the spec gate
+    And the specifier ran again
+
+  Scenario: Restarting with changes runs the edited request
+    Given I am signed in
+    And mission CODEC-1781 "Add from_cents" on codec-swarm-sandbox is waiting at its spec gate
+    When I open the restart form of CODEC-1781
+    Then it is filled with the title "Add from_cents"
+    When I restart CODEC-1781 with the title "Add from_cents and to_cents"
+    Then mission CODEC-1781 now has the title "Add from_cents and to_cents"
+
+  Scenario: A mission that is working can't be restarted
+    Given I am signed in
+    And mission CODEC-1782 "Add from_cents" on codec-swarm-sandbox is waiting at its spec gate
+    And CODEC-1782 is in the middle of a step
+    When I restart CODEC-1782 from its page
+    Then the mission page says "is working right now"
+
+  Scenario: Updating a lane from its base rebases the local PR and reruns the checks
+    Given I am signed in
+    And mission CODEC-1783 "Partial refunds" has a local PR for codec-payment
+    And codec-payment's checks are "test -f README.md"
+    And origin's develop gets a new commit adding docs/CHANGELOG.md
+    When I update codec-payment of CODEC-1783 from its base
+    Then the local PR of CODEC-1783 for codec-payment sits on the new develop with one commit
+    And the activity of CODEC-1783 says the checks pass
+
+  Scenario: An update that conflicts changes nothing
+    Given I am signed in
+    And mission CODEC-1784 "Partial refunds" has a local PR for codec-payment
+    And codec-payment's checks are "test -f README.md"
+    And origin's develop gets a conflicting src/refunds.ts
+    When I update codec-payment of CODEC-1784 from its base
+    Then the activity of CODEC-1784 says it conflicts in src/refunds.ts
+    And the local PR of CODEC-1784 for codec-payment is unchanged

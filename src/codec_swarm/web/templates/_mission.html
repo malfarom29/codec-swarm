@@ -5,9 +5,16 @@
       {% if m.pack %}<span class="pill dim">{{ m.pack }}</span>{% endif %}
       {% if m.autonomy %}<span class="pill dim">{{ m.autonomy }}</span>{% endif %}
       {% if m.jev %}<span class="pill aqua">Jev on</span>{% else %}<span class="pill dim">Jev off</span>{% endif %}
-      · ${{ "%.2f" | format(m.cost_usd) }} so far
+      · ${{ "%.2f" | format(m.cost_usd) }} so far{% if m.runs > 1 %} (run {{ m.runs }}; earlier runs ${{ "%.2f" | format(m.earlier_cost_usd) }}){% endif %}
       {% if m.blocked %}· <span class="pill red">blocked: {{ m.blocked }}</span>{% endif %}
+      {% if busy %}· <span class="pill aqua">working</span>{% endif %}
     </p>
+  </div>
+  <div class="missionactions" data-mission-actions>
+    <form method="post" action="/missions/{{ m.ticket }}/resume"><button {{ "disabled" if busy }} title="Continue from the last checkpoint, e.g. after an error or a server restart">Resume</button></form>
+    <form method="post" action="/missions/{{ m.ticket }}/restart" onsubmit="return confirm('Restart {{ m.ticket }} from the first role? Its worktrees, local branches, local PRs and agent sessions are set aside; pushed branches stay.')">
+      <button {{ "disabled" if busy }}>Restart</button></form>
+    <a class="button" href="/missions/{{ m.ticket }}/restart">Restart with changes</a>
   </div>
 </div>
 {% set back = "/missions/" ~ m.ticket %}
@@ -26,6 +33,12 @@
     <div class="right">
       {% set tone = {"pr_ready": "", "waiting": "amber", "failed": "red", "running": "aqua"}.get(lane.status, "dim") %}
       <span class="pill {{ tone }}">{{ lane.status.replace("_", " ") }}{% if lane.gate %} · {{ lane.gate.kind }} gate{% endif %}</span>
+      {% if lane.status != "not_started" and not lane.merged_into %}
+      <form method="post" action="/missions/{{ m.ticket }}/lanes/{{ repo }}/update" class="updateform" title="Rebase this lane on the newest commits of its base branch">
+        <button {{ "disabled" if busy }}>Update from base</button>
+        {% if lane.gate and lane.gate.kind in ("pr", "review") %}<label class="check"><input type="checkbox" name="resolve" value="coder" checked> conflicts go to the coder</label>{% endif %}
+      </form>
+      {% endif %}
       {% if lane.pr_url %}<a href="{{ lane.pr_url }}" data-local-pr>Local PR</a>{% endif %}
       {% if lane.pushed_url %}<a href="{{ lane.pushed_url }}" target="_blank" rel="noopener">GitHub</a>{% endif %}
       {% if lane.merged_into %}<span class="pill">merged into {{ lane.merged_into }}</span>{% endif %}

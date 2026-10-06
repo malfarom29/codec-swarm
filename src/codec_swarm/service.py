@@ -18,10 +18,12 @@ import anyio
 from pydantic import BaseModel
 
 from codec_swarm.domain import Autonomy, Mission, choose_pack_rule
-from codec_swarm.graph import APPROVE, MissionRunner
-from codec_swarm.graph.coordinator import MissionCoordinator, MissionResult
+from codec_swarm.graph import APPROVE, SEND_BACK, MissionRunner
+from codec_swarm.graph.coordinator import MissionCoordinator, MissionResult, lane_thread
+from codec_swarm.graph.runner import forget_threads
 from codec_swarm.harness import BranchFlow, LocalOverrides, load_pack, load_repo_config, resolve_session
 from codec_swarm.plugins.claude_code import ClaudeCodeBackend
+from codec_swarm.plugins.checks import run_check
 from codec_swarm.plugins.gate import PerRepoGate
 from codec_swarm.plugins.jev import JevClient, LaneUnderJudgement
 from codec_swarm.plugins.jev.packs import choose_pack_jev
@@ -32,16 +34,20 @@ from codec_swarm.store.chat import ChatStore
 from codec_swarm.store.views import mission_view
 from codec_swarm.store.settings import JiraSettings, Settings
 from codec_swarm.workspace import Workspace, WorkspaceRecorder
-from codec_swarm.workspace.github import GitHubPublisher, LocalPR
+from codec_swarm.workspace.github import GitHubPublisher, LocalPR, merge_for_resolution, update_from_base
 from codec_swarm.workspace.envs import DEFAULT_FILE as DEFAULT_ENV_FILE
 from codec_swarm.workspace.envs import FILE_NAME as ENV_FILE_NAME
 from codec_swarm.workspace.envs import RepoEnvs, write_env_file
-from codec_swarm.workspace.lanes import DEFAULT_ROOT
+from codec_swarm.workspace.lanes import DEFAULT_ROOT, Lane
 from codec_swarm.workspace.repos import RepoCatalog
 from codec_swarm.workspace.repos import repo_name as repo_name
 from codec_swarm.workspace.secrets import load_secrets, remove_secret, save_secret
 
 JIRA_TOKEN = "JIRA_API_TOKEN"
+
+
+class MissionBusy(RuntimeError):
+    """The mission is in the middle of a step; the action must wait for a gate."""
 
 
 class MissionRequest(BaseModel, frozen=True):
@@ -188,8 +194,8 @@ class MissionService:
         return LocalOverrides(model=forced_model, default_model=local.model, extra_mcp=tuple(local.extra_mcp), extra_skills=tuple(local.extra_skills))
 
     def stored_request(self, ticket: str) -> tuple[MissionRequest, str] | None:
-        """The request and pack a mission was started with, from its mission.started event."""
-        for e in self.events.list(ticket):
+        """The request and pack a mission was last started with, from its latest mission.started event."""
+        for e in reversed(self.events.list(ticket)):
             if e.kind == "mission.started" and "request" in e.payload:
                 return MissionRequest.model_validate(e.payload["request"]), e.payload["pack"]
         return None
@@ -218,6 +224,79 @@ class MissionService:
                 return await runtime.coordinator.answer(ticket, lane, answer, note)
             finally:
                 self._log_jev(runtime)
+
+    def is_busy(self, ticket: str) -> bool:
+        """A step, gate answer or recovery is running for this mission right now."""
+        runtime = self._runtimes.get(ticket)
+        return bool(runtime and runtime.lock.locked())
+
+    async def restart(self, ticket: str, request: MissionRequest | None = None) -> MissionResult:
+        """Throw away the mission's worktrees, branches, checkpoints and sessions, then run it again from the start."""
+        if self.is_busy(ticket):
+            raise MissionBusy(f"{ticket} is working right now; restart it once it waits at a gate or stops")
+        stored = self.stored_request(ticket)
+        if request is None:
+            if stored is None:
+                raise KeyError(f"{ticket} has no recorded mission")
+            request = stored[0]
+        repos = {repo_name(u) for u in request.repo_urls} | ({repo_name(u) for u in stored[0].repo_urls} if stored else set())
+        self._runtimes.pop(ticket, None)
+        await forget_threads(self.db, [ticket, *(lane_thread(ticket, r) for r in sorted(repos))])
+        removed = await anyio.to_thread.run_sync(self._workspace.discard, ticket)
+        self._sessions.forget(ticket)
+        self.chat.forget_pending(ticket)
+        self.events.append(ticket, "mission.restarted", {"removed": removed})
+        return await self.start(request)
+
+    async def update_from_base(self, ticket: str, repo: str, resolve_with_coder: bool = False) -> str:
+        """Rebase a lane on its newest base. Clean: refresh its local PR and rerun the checks. Conflict: back out,
+        or, at an open PR or review gate, merge with the markers left in and send the lane back to the coder."""
+        if self.is_busy(ticket):
+            raise MissionBusy(f"{ticket} is working right now; update it once it waits at a gate")
+        lane, pr = self._lane(ticket, repo)
+        result = await anyio.to_thread.run_sync(update_from_base, lane)
+        if result.up_to_date:
+            return f"{repo} already has everything from {lane.base}."
+        if result.ok:
+            if pr is not None:
+                await anyio.to_thread.run_sync(self.prs.refresh, pr)
+            self.events.append(ticket, "lane.rebased", {"lane": repo, "onto": result.onto[:12], "base": lane.base})
+            passed, failed = await self._recheck(ticket, repo, lane)
+            self.events.append(ticket, "lane.rechecked", {"lane": repo, "passed": passed, "failed": failed})
+            return f"Rebased {repo} on {lane.base}; checks {'pass' if passed else 'fail: ' + ', '.join(failed)}."
+        files = ", ".join(result.conflicts)
+        if resolve_with_coder and self._open_gate(ticket, repo):
+            conflicted = await anyio.to_thread.run_sync(merge_for_resolution, lane)
+            note = (f"{lane.base} moved on and conflicts with this lane in: {', '.join(conflicted) or files}. "
+                    "The merge is in progress in your worktree with conflict markers in those files. Resolve every marker, "
+                    "keep both sides' intent, run the tests, and do not run git yourself: the orchestrator commits the merge.")
+            self.events.append(ticket, "lane.conflict", {"lane": repo, "files": conflicted or result.conflicts, "sent_to": "coder"})
+            await self.answer(ticket, repo, SEND_BACK, note)
+            return f"Sent {repo} back to the coder to resolve conflicts in {files}."
+        self.events.append(ticket, "lane.conflict", {"lane": repo, "files": result.conflicts})
+        return f"{lane.base} conflicts with {repo} in {files}; nothing was changed."
+
+    def _lane(self, ticket: str, repo: str) -> tuple[Lane, LocalPR | None]:
+        loaded = self.local_pr(ticket, repo)
+        if loaded is not None:
+            return loaded[0].lane(), loaded[0]
+        path = self._workspace.worktrees / ticket / repo
+        if not (path / ".git").exists():
+            raise KeyError(f"{ticket} has no lane for {repo} yet")
+        stored = self.stored_request(ticket)
+        base = (stored[0].bases.get(repo) if stored else None) or self.repos.configured_base(repo) or "develop"
+        branch = subprocess.run(["git", "branch", "--show-current"], cwd=path, capture_output=True, text=True).stdout.strip()
+        return Lane(ticket=ticket, repo=repo, path=path, branch=branch, base=base), None
+
+    async def _recheck(self, ticket: str, repo: str, lane: Lane) -> tuple[bool, list[str]]:
+        config = load_repo_config(self._workspace.repos / repo, load_pack("codec-standard"), local_dir=self.repos.local_dir)
+        env = self.envs.for_lane(ticket, repo)
+
+        def run_all() -> list[str]:
+            return [c.id for c in config.checks if not run_check(c, lane.path, env)[0]]
+
+        failed = await anyio.to_thread.run_sync(run_all)
+        return not failed, failed
 
     async def recover(self, ticket: str) -> MissionResult:
         runtime = await self.runtime(ticket)

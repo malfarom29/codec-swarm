@@ -106,6 +106,33 @@ def _worktree_on(clone: Path, branch: str) -> Path | None:
     return None
 
 
+class Rebase(BaseModel):
+    ok: bool
+    onto: str  # the base commit the lane now sits on (or would have)
+    conflicts: list[str] = []
+    up_to_date: bool = False
+
+
+def update_from_base(lane: Lane) -> Rebase:
+    """Fetch, then replay the lane's commits on the newest origin/<base>. A conflict is backed out completely."""
+    git(lane.path, "fetch", "--quiet", "origin", lane.base)
+    onto = git(lane.path, "rev-parse", f"origin/{lane.base}")
+    if subprocess.run(["git", "merge-base", "--is-ancestor", onto, "HEAD"], cwd=lane.path, capture_output=True).returncode == 0:
+        return Rebase(ok=True, onto=onto, up_to_date=True)
+    proc = subprocess.run(["git", *SWARM_IDENTITY, "rebase", "--autostash", f"origin/{lane.base}"], cwd=lane.path, capture_output=True, text=True)
+    if proc.returncode == 0:
+        return Rebase(ok=True, onto=onto)
+    conflicts = git(lane.path, "diff", "--name-only", "--diff-filter=U").splitlines()
+    subprocess.run(["git", "rebase", "--abort"], cwd=lane.path, capture_output=True)
+    return Rebase(ok=False, onto=onto, conflicts=conflicts or ["(git did not name the files)"])
+
+
+def merge_for_resolution(lane: Lane) -> list[str]:
+    """Merge origin/<base> into the lane and leave the conflict markers for the coder; the next step's commit ends the merge."""
+    proc = subprocess.run(["git", *SWARM_IDENTITY, "merge", "--no-ff", "--no-commit", f"origin/{lane.base}"], cwd=lane.path, capture_output=True, text=True)
+    return git(lane.path, "diff", "--name-only", "--diff-filter=U").splitlines() if proc.returncode != 0 else []
+
+
 class GitHubPublisher:
     def __init__(self, lanes: dict[tuple[str, str], Lane], run: Runner = run_command, record_dir: Callable[[str, str], Path] | None = None) -> None:
         self._lanes = lanes
@@ -192,6 +219,15 @@ class GitHubPublisher:
                 subprocess.run(["git", "worktree", "remove", "--force", str(where)], cwd=clone, capture_output=True)
         self._save(pr.model_copy(update={"merged_into": target, "merged_sha": merged}))
         return merged
+
+    def refresh(self, pr: LocalPR) -> LocalPR:
+        """After a rebase: the squashed commit moved, so point the local PR at it and its new base."""
+        lane = pr.lane()
+        base_sha = git(lane.path, "merge-base", f"origin/{lane.base}", "HEAD")
+        sha = git(lane.path, "rev-parse", "HEAD") if base_sha != git(lane.path, "rev-parse", "HEAD") else None
+        updated = pr.model_copy(update={"base_sha": base_sha, "sha": sha})
+        self._save(updated)
+        return updated
 
     def branches(self, pr: LocalPR) -> list[str]:
         """Branches a PR could point at: origin's, then local ones, without the lane's own."""

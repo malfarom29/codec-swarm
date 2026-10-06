@@ -190,3 +190,8 @@ form.stack textarea { width: 100%; }
 .envover { margin: -2px 0 6px; }
 .envover summary { font-size: 12px; }
 .envover textarea { width: 100%; margin-top: 6px; }
+.missionactions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.missionactions form, .updateform { margin: 0; }
+.updateform { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.updateform .check { font-size: 12px; color: var(--muted); }
+button:disabled { opacity: .45; cursor: not-allowed; }
