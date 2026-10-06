@@ -357,6 +357,13 @@ class MissionService:
             await self.answer(ticket, repo, APPROVE)
         return result
 
+    def waiting_at_gate(self, ticket: str, lane: str) -> bool:
+        """The planning thread (lane "") or a lane is waiting at a gate, per the event log."""
+        view = mission_view(self.events.list(ticket)) if self.events.list(ticket) else None
+        if view is None:
+            return False
+        return view.planning_gate is not None if not lane else bool(view.lanes.get(lane) and view.lanes[lane].gate)
+
     def _open_gate(self, ticket: str, repo: str) -> bool:
         lane = mission_view(self.events.list(ticket)).lanes.get(repo)
         return bool(lane and lane.gate and lane.gate.kind in ("pr", "review"))

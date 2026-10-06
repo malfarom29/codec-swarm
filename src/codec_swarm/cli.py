@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -149,10 +150,61 @@ def up(args: argparse.Namespace) -> int:
     # A new token every launch; the URL below carries it. CODEC_SWARM_TOKEN pins it for local previews.
     token = os.environ.get("CODEC_SWARM_TOKEN") or secrets.token_urlsafe(18)
     service = MissionService(Path(args.root))
-    app = create_app(service, token)
+    if args.in_process:  # one process, as before the worker split: handy for debugging
+        app = create_app(service, token)
+        supervisor = None
+    else:
+        from codec_swarm.store.commands import CommandQueue
+
+        app = create_app(service, token, CommandQueue(service.db))
+        supervisor = WorkerSupervisor(args.root)
+        supervisor.start()
     print(f"codec-swarm dashboard: http://127.0.0.1:{args.port}/?token={token}")
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")  # localhost only
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")  # localhost only
+    finally:
+        if supervisor is not None:
+            supervisor.stop()
     return 0
+
+
+class WorkerSupervisor:
+    """Runs `codec-swarm worker` beside the dashboard and starts it again if it dies."""
+
+    def __init__(self, root: str) -> None:
+        import threading
+
+        self._root = root
+        self._stopping = threading.Event()
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._thread = threading.Thread(target=self._loop, name="codec-swarm-worker", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def _loop(self) -> None:
+        import time
+
+        while not self._stopping.is_set():
+            argv = [sys.executable, "-m", "codec_swarm.cli", "worker", "--root", self._root, "--parent", str(os.getpid())]
+            self._proc = subprocess.Popen(argv)
+            code = self._proc.wait()
+            if self._stopping.is_set():
+                return
+            if code == 3:  # another worker owns this workspace (an older `up`); try again once it's gone
+                time.sleep(15)
+                continue
+            print(f"codec-swarm worker exited ({code}); starting it again", file=sys.stderr)
+            time.sleep(2)
+
+    def stop(self) -> None:
+        self._stopping.set()
+        if self._proc is not None and self._proc.poll() is None:
+            self._proc.terminate()  # the worker stops between steps' checkpoints; the next one resumes them
+            try:
+                self._proc.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -177,6 +229,10 @@ def main(argv: list[str] | None = None) -> int:
     u = sub.add_parser("up", help="serve the dashboard on localhost")
     u.add_argument("--port", type=int, default=8765)
     u.add_argument("--root", default=str(DEFAULT_ROOT))
+    u.add_argument("--in-process", action="store_true", help="run missions inside the dashboard instead of a worker process")
+    w = sub.add_parser("worker", help="run missions for the dashboard (codec-swarm up starts one for you)")
+    w.add_argument("--root", default=str(DEFAULT_ROOT))
+    w.add_argument("--parent", type=int, help=argparse.SUPPRESS)  # set by `up`: exit when that process is gone
     r = sub.add_parser("report", help="metrics per mission and the pack / Jev comparison")
     r.add_argument("tickets", nargs="*")
     r.add_argument("--root", action="append", help="workspace root to read; repeat to combine several (default ~/.codec-swarm)")
@@ -187,6 +243,10 @@ def main(argv: list[str] | None = None) -> int:
         return report(args)
     if args.command == "up":
         return up(args)
+    if args.command == "worker":
+        from codec_swarm.worker import run_worker
+
+        return run_worker(args.root, args.parent)
     return 2
 
 

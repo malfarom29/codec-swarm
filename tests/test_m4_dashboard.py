@@ -862,3 +862,62 @@ def first_step_note(web, note):
 @then("the specifier did not run again")
 def no_specifier(web):
     assert "specifier" not in web["service"].backend.calls
+
+
+# --- worker process -----------------------------------------------------------------
+
+
+@given("the dashboard sends missions to a worker queue")
+def queued_dashboard(web):
+    from codec_swarm.store.commands import CommandQueue
+
+    web["service"] = FakeMissionService(web["tmp"] / "root")
+    web["queue"] = CommandQueue(web["service"].db)
+    web["app"] = create_app(web["service"], "s3cret", web["queue"])
+    web["client"] = TestClient(web["app"])
+    web["token"] = "s3cret"
+
+
+@then(parsers.parse("the start of {ticket} is queued and nothing has run yet"))
+def queued(web, ticket):
+    assert web["queue"].is_busy(ticket) and web["queue"].pending_count() == 1
+    assert web["service"].events.list(ticket) == []
+
+
+@then(parsers.parse("the mission page of {ticket} shows it as working"))
+def page_working(web, ticket):
+    # Nothing is in the event log yet, so the page is a 404 until the worker starts; the board shows the queue.
+    assert "1 queued" in web["client"].get("/").text
+
+
+@when("the worker runs what is queued")
+def worker_runs(web):
+    from codec_swarm.worker import Worker
+
+    async def main():
+        stop = anyio.Event()
+        worker = Worker(web["service"], web["queue"])
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(worker.run, stop)
+            with anyio.fail_after(10):
+                while web["queue"].pending_count() or any(web["queue"].is_busy(t) for t in ("CODEC-1800", "CODEC-1801")):
+                    await anyio.sleep(0.05)
+            stop.set()
+
+    anyio.run(main)
+
+
+@given(parsers.parse("a worker died while approving the spec of {ticket}"))
+def died_mid_command(web, ticket):
+    web["queue"].submit(ticket, "answer", {"lane": "", "answer": "approve"})
+    web["queue"].claim("dead-worker")  # claimed, never finished
+
+
+@then(parsers.parse("{ticket} was resumed from its checkpoint, with my approval applied"))
+def resumed(web, ticket):
+    from codec_swarm.store.views import mission_view
+
+    events = web["service"].events.list(ticket)
+    assert "mission.interrupted" in [e.kind for e in events]
+    view = mission_view(events)
+    assert view.planning_gate is None and view.lanes["codec-swarm-sandbox"].gate.kind == "pr"  # the approval went through

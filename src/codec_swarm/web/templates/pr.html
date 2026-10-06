@@ -14,16 +14,17 @@
 </div>
 {% if error %}<div class="panel note bad" data-error>{{ error }}</div>{% endif %}
 {% if pr.squash_error %}<div class="panel note" data-squash-error><strong>Not squashed.</strong> <pre class="prbody">{{ pr.squash_error }}</pre>Set the repo's <span class="mono">commit:</span> rules on the Repos page to match its hooks, then Update from base or restart to squash again.</div>{% endif %}
-{% if done == "merge" %}<div class="panel note">Merged into {{ pr.merged_into }} in codec-swarm's clone. Nothing was pushed; when you're ready:<br><code>git -C ~/.codec-swarm/repos/{{ pr.repo }} push origin {{ pr.merged_into }}</code></div>
-{% elif done == "push" %}<div class="panel note">Pushed and opened: <a href="{{ pr.pushed_url }}" target="_blank" rel="noopener">{{ pr.pushed_url }}</a></div>{% endif %}
+{% if busy %}<div class="panel note" data-working hx-get="{{ request.url.path }}" hx-trigger="codec:change from:body" hx-select="main" hx-target="main" hx-swap="outerHTML">Working on it in the background; this page updates when it's done.</div>
+{% elif done == "merge" and pr.merged_into %}<div class="panel note">Merged into {{ pr.merged_into }} in codec-swarm's clone. Nothing was pushed; when you're ready:<br><code>git -C ~/.codec-swarm/repos/{{ pr.repo }} push origin {{ pr.merged_into }}</code></div>
+{% elif done == "push" and pr.pushed_url %}<div class="panel note">Pushed and opened: <a href="{{ pr.pushed_url }}" target="_blank" rel="noopener">{{ pr.pushed_url }}</a></div>{% endif %}
 
 <form method="post" action="/missions/{{ m.ticket }}/prs/{{ pr.repo }}" class="panel prform" data-pr-actions>
   <label>Target branch
     <input name="target" list="branches" value="{{ target or pr.pushed_to or pr.merged_into or pr.base }}" required autocomplete="off">
     <datalist id="branches">{% for b in branches %}<option value="{{ b }}">{% endfor %}</datalist>
   </label>
-  <button class="primary" name="action" value="push" {{ "disabled" if not pr.sha }}>{{ "Update on GitHub" if pr.pushed_url else "Push and open on GitHub" }}</button>
-  <button name="action" value="merge" {{ "disabled" if not pr.sha or pr.merged_into }}>Merge locally</button>
+  <button class="primary" name="action" value="push" {{ "disabled" if not pr.sha or busy }}>{{ "Update on GitHub" if pr.pushed_url else "Push and open on GitHub" }}</button>
+  <button name="action" value="merge" {{ "disabled" if not pr.sha or pr.merged_into or busy }}>Merge locally</button>
   <span class="muted">Started from <span class="mono">{{ pr.base }}</span>. Merging stays on this machine; pushing opens the PR with the description below.</span>
 </form>
 <form method="post" action="/missions/{{ m.ticket }}/lanes/{{ pr.repo }}/update" class="updateform">

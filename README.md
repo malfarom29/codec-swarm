@@ -44,6 +44,12 @@ cp .env.example .env            # optional: set TYPESAFE_API_KEY (or put it in ~
 uv run codec-swarm up           # dashboard on http://127.0.0.1:8765
 ```
 
+`up` runs two processes:
+- the dashboard, which only reads the workspace and writes commands to a queue;
+- a worker, which claims those commands and runs the missions. Commands run one at a time per mission, with up to 4 missions in parallel.
+
+So pages stay fast while lanes build and test, and restarting the dashboard doesn't stop a mission. If the worker dies, `up` starts it again, and whatever it was doing resumes from the last checkpoint (an interrupted gate answer is applied again). The sidebar shows the worker's status and how many commands are queued. `codec-swarm worker` runs a worker on its own; `up --in-process` runs everything in one process, as before.
+
 `up` prints a URL with a launch token; open that one, since the bare address answers 401. Use `--port` to change the port and `--root` to use a workspace other than `~/.codec-swarm`. Keep the terminal open while missions run.
 
 ### Your first mission

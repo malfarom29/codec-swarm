@@ -29,7 +29,9 @@ from codec_swarm.harness.packs import MODEL_ORDER
 from codec_swarm.plugins.jev import MODEL as JEV_MODEL
 from codec_swarm.plugins.jira import JiraError
 from codec_swarm.plugins.registry import jev_available
+from codec_swarm.dispatch import execute
 from codec_swarm.service import MissionRequest, MissionService
+from codec_swarm.store.commands import CommandQueue
 from codec_swarm.workspace.envs import parse as parse_env
 from codec_swarm.workspace.repos import check_name, repo_name
 from codec_swarm.store.settings import Orchestration, RoleOverride
@@ -69,6 +71,14 @@ def _line(e: Event) -> str | None:
     if e.kind == "commit.rejected":
         first = next((line for line in (p.get("output") or "").splitlines() if "✖" in line or "error" in line.lower()), "")
         return f"{lane}{who}: the repo's hooks rejected the commit (try {p.get('tries')}){': ' + first.strip() if first else ''}; sent back to {who}"
+    if e.kind == "pr.failed":
+        return f"{lane}{p.get('action')} failed: {p.get('error')}"
+    if e.kind == "pr.pushed":
+        return f"{lane}pushed and opened on GitHub into {p.get('target')}: {p.get('url')}"
+    if e.kind == "pr.merged":
+        return f"{lane}merged locally into {p.get('target')} ({str(p.get('sha'))[:8]})"
+    if e.kind == "mission.interrupted":
+        return "the worker restarted mid-command; resuming from the last checkpoint"
     if e.kind == "lane.update":  # one line per update from base: up to date, rebased and checked, or conflicting
         return f"{lane}{p.get('message')}"
     if e.kind == "env.note":
@@ -116,6 +126,8 @@ def notification(e: Event) -> dict[str, str] | None:
         return {"kind": "input", "title": where, "body": what, "url": f"/missions/{e.mission}/prs/{lane}" if kind in ("pr", "review") and lane else "/inbox"}
     if e.kind in ("mission.blocked", "mission.error", "lane.failed"):
         return {"kind": "input", "title": where, "body": "stopped: " + str(e.payload.get("reason") or e.payload.get("error") or "needs a look")[:140], "url": f"/missions/{e.mission}"}
+    if e.kind == "pr.failed":
+        return {"kind": "input", "title": where, "body": f"{e.payload.get('action')} failed", "url": f"/missions/{e.mission}/prs/{lane}"}
     if e.kind == "lane.conflict" and not e.payload.get("sent_to"):
         return {"kind": "input", "title": where, "body": "conflicts with its base branch", "url": f"/missions/{e.mission}"}
     if e.kind == "lane.rechecked" and not e.payload.get("passed"):
@@ -140,7 +152,9 @@ def open_questions(events: list[Event]) -> list[tuple[str, str]]:
     return [(role, q) for (_, role), qs in latest.items() for q in qs]
 
 
-def create_app(service: MissionService, token: str) -> FastAPI:
+def create_app(service: MissionService, token: str, queue: CommandQueue | None = None) -> FastAPI:
+    """With a queue, every mission action becomes a command for the worker process; without one (tests),
+    the same commands run in this process after the response."""
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         async def sync_jira_forever() -> None:
@@ -229,13 +243,24 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         # A changed stylesheet or script is never served from cache.
         css_version = int(max((HERE / "static" / name).stat().st_mtime for name in ("codec.css", "codec.js")))
         jev_on = jev_available() and service.settings.orchestration().jev_enabled
-        return templates.TemplateResponse(request, name, {"last_id": last_id(), "jev_on": jev_on, "css_v": css_version, **context})
+        worker = None if queue is None else {"alive": queue.worker_alive(), "pending": queue.pending_count()}
+        return templates.TemplateResponse(request, name, {"last_id": last_id(), "jev_on": jev_on, "css_v": css_version, "worker": worker, **context})
 
-    async def in_background(ticket: str, work: Callable[[], Awaitable[Any]]) -> None:
-        try:
-            await work()
-        except Exception as error:  # surface failures on the page instead of losing them in a server log
-            service.events.append(ticket, "mission.error", {"error": f"{type(error).__name__}: {error}"})
+    def dispatch(background: BackgroundTasks, ticket: str, kind: str, **args: Any) -> None:
+        if queue is not None:
+            queue.submit(ticket, kind, args)
+            return
+
+        async def run() -> None:
+            try:
+                await execute(service, ticket, kind, args)
+            except Exception:  # execute() already wrote it to the event log, where the page shows it
+                pass
+
+        background.add_task(run)
+
+    def busy(ticket: str) -> bool:
+        return service.is_busy(ticket) or (queue is not None and queue.is_busy(ticket))
 
     # --- pages ----------------------------------------------------------------
 
@@ -291,7 +316,7 @@ def create_app(service: MissionService, token: str) -> FastAPI:
                 for role in roles
             ]))
         stages = [s for s in STAGES if s[0] != "intake"]
-        return {"m": view, "activity": activity, "groups": groups, "stages": stages, "stage_index": stage_index, "busy": service.is_busy(ticket)}
+        return {"m": view, "activity": activity, "groups": groups, "stages": stages, "stage_index": stage_index, "busy": busy(ticket)}
 
     @app.get("/missions/new", response_class=HTMLResponse)
     async def new_mission(request: Request, ticket: str = "", title: str = "", description: str = "", repo_urls: str = ""):
@@ -431,9 +456,9 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         if form.get("restart"):
             if (refused := busy_redirect(request.ticket)) is not None:
                 return refused
-            background.add_task(in_background, request.ticket, lambda: service.restart(request.ticket, request))
+            dispatch(background, request.ticket, "restart", request=request.model_dump(mode="json"))
         else:
-            background.add_task(in_background, request.ticket, lambda: service.start(request))
+            dispatch(background, request.ticket, "start", request=request.model_dump(mode="json"))
         return RedirectResponse(f"/missions/{request.ticket}", status_code=303)
 
     @app.post("/harness/{pack}/{role}")
@@ -464,27 +489,41 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         if loaded is None:
             return PlainTextResponse(f"{ticket} has no local PR for {repo} yet", status_code=404)
         pr, body = loaded
-        view = mission_view(service.events.list(ticket))
+        events = service.events.list(ticket)
+        view = mission_view(events)
         lane = view.lanes.get(repo)
+        failure = None  # the worker's last push or merge failure, unless one succeeded since
+        for e in events:
+            if e.payload.get("lane") == repo and e.kind in ("pr.pushed", "pr.merged", "pr.failed"):
+                failure = e.payload.get("error") if e.kind == "pr.failed" else None
+        error = error or failure or ""
         stat, diff = await anyio.to_thread.run_sync(service.prs.diff, pr)
         verdicts = lane.verdicts if lane else []
         return render(
             request, "pr.html", m=view, pr=pr, body=body, lane=lane, stat=stat, diff_lines=diff.splitlines(),
             branches=service.prs.branches(pr), verdict=verdicts[-1] if verdicts else None, error=error, done=done, target=target,
-            gate=lane.gate if lane and lane.gate and lane.gate.kind in ("pr", "review") else None,
+            gate=lane.gate if lane and lane.gate and lane.gate.kind in ("pr", "review") else None, busy=busy(ticket),
         )
 
     @app.post("/missions/{ticket}/prs/{repo}")
-    async def pr_action(ticket: str, repo: str, action: str = Form(...), target: str = Form(...)):
+    async def pr_action(background: BackgroundTasks, ticket: str, repo: str, action: str = Form(...), target: str = Form(...)):
         back = f"/missions/{ticket}/prs/{repo}"
-        try:
-            await service.pr_action(ticket, repo, action, target)
-        except (ValueError, RuntimeError, KeyError) as error:
-            return RedirectResponse(f"{back}?{urlencode({'error': str(error), 'target': target})}", status_code=303)
-        return RedirectResponse(f"{back}?{urlencode({'done': action})}", status_code=303)
+        problem = None
+        if action not in ("push", "merge"):
+            problem = f"unknown action {action}"
+        elif service.local_pr(ticket, repo) is None:
+            problem = f"{ticket} has no local PR for {repo}"
+        elif subprocess.run(["git", "check-ref-format", "--branch", target.strip()], capture_output=True).returncode != 0:
+            problem = f"{target!r} is not a branch name"
+        elif busy(ticket):
+            problem = f"{ticket} is working right now; try again once it waits here"
+        if problem:
+            return RedirectResponse(f"{back}?{urlencode({'error': problem, 'target': target})}", status_code=303)
+        dispatch(background, ticket, "pr_action", repo=repo, action=action, target=target.strip())
+        return RedirectResponse(f"{back}?{urlencode({'done': action, 'target': target})}", status_code=303)
 
     def busy_redirect(ticket: str) -> RedirectResponse | None:
-        if service.is_busy(ticket):
+        if busy(ticket):
             message = f"{ticket} is working right now; try again once it waits at a gate or stops."
             return RedirectResponse(f"/missions/{ticket}?{urlencode({'error': message})}", status_code=303)
         return None
@@ -493,14 +532,14 @@ def create_app(service: MissionService, token: str) -> FastAPI:
     async def resume_mission(background: BackgroundTasks, ticket: str):
         if (refused := busy_redirect(ticket)) is not None:
             return refused
-        background.add_task(in_background, ticket, lambda: service.recover(ticket))
+        dispatch(background, ticket, "recover")
         return RedirectResponse(f"/missions/{ticket}?{urlencode({'notice': 'Resuming from the last checkpoint.'})}", status_code=303)
 
     @app.post("/missions/{ticket}/restart")
     async def restart_mission(background: BackgroundTasks, ticket: str):
         if (refused := busy_redirect(ticket)) is not None:
             return refused
-        background.add_task(in_background, ticket, lambda: service.restart(ticket))
+        dispatch(background, ticket, "restart")
         return RedirectResponse(f"/missions/{ticket}?{urlencode({'notice': 'Restarting from the first role.'})}", status_code=303)
 
     @app.get("/missions/{ticket}/restart", response_class=HTMLResponse)
@@ -517,19 +556,14 @@ def create_app(service: MissionService, token: str) -> FastAPI:
     async def restart_lane(background: BackgroundTasks, ticket: str, repo: str, note: str = Form("")):
         if (refused := busy_redirect(ticket)) is not None:
             return refused
-        background.add_task(in_background, ticket, lambda: service.restart_lane(ticket, repo, note))
+        dispatch(background, ticket, "restart_lane", repo=repo, note=note)
         return RedirectResponse(f"/missions/{ticket}?{urlencode({'notice': f'Restarting the {repo} lane from its first role.'})}", status_code=303)
 
     @app.post("/missions/{ticket}/lanes/{repo}/update")
     async def update_lane(background: BackgroundTasks, ticket: str, repo: str, resolve: str = Form(""), back: str = Form("")):
         if (refused := busy_redirect(ticket)) is not None:
             return refused
-
-        async def work() -> None:
-            message = await service.update_from_base(ticket, repo, resolve_with_coder=bool(resolve))
-            service.events.append(ticket, "lane.update", {"lane": repo, "message": message})
-
-        background.add_task(in_background, ticket, work)
+        dispatch(background, ticket, "update", repo=repo, resolve=bool(resolve))
         target = back if back.startswith("/") else f"/missions/{ticket}"
         return RedirectResponse(f"{target}?{urlencode({'notice': f'Updating {repo} from its base; the result shows in Activity.'})}", status_code=303)
 
@@ -624,7 +658,7 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         background: BackgroundTasks, ticket: str, lane: str = Form(""), answer: str = Form(...), back: str = Form(""), note: str = Form(""),
     ):
         note = note.strip() if answer == "send_back" else ""
-        background.add_task(in_background, ticket, lambda: service.answer(ticket, lane or None, answer, note))
+        dispatch(background, ticket, "answer", lane=lane, answer=answer, note=note)
         return RedirectResponse(back or f"/missions/{ticket}", status_code=303)
 
     # --- live feed --------------------------------------------------------------

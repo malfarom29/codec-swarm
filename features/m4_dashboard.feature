@@ -281,3 +281,20 @@ Feature: M4 dashboard
     When I restart lane codec-swarm-sandbox of CODEC-1790 with "Use the existing Money helpers"
     Then the backend-coder's first step got "Use the existing Money helpers"
     And the specifier did not run again
+
+  Scenario: With a worker, the dashboard queues the mission and the worker runs it
+    Given the dashboard sends missions to a worker queue
+    And I am signed in
+    When I start mission CODEC-1800 "Add from_cents" on codec-swarm-sandbox in gated mode
+    Then the start of CODEC-1800 is queued and nothing has run yet
+    And the mission page of CODEC-1800 shows it as working
+    When the worker runs what is queued
+    Then the inbox shows the spec gate of CODEC-1800
+
+  Scenario: A worker that died mid-command is picked up by the next one
+    Given the dashboard sends missions to a worker queue
+    And I am signed in
+    And mission CODEC-1801 "Add from_cents" on codec-swarm-sandbox is waiting at its spec gate
+    And a worker died while approving the spec of CODEC-1801
+    When the worker runs what is queued
+    Then CODEC-1801 was resumed from its checkpoint, with my approval applied

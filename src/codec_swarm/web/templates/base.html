@@ -26,6 +26,7 @@
     <a href="/jira" class="{{ 'active' if here == '/jira' }}">Jira</a>
     <div class="foot">
       <button type="button" class="soundtoggle" id="sound-toggle" aria-pressed="false" title="Play a sound when your input is needed or a PR is ready">Sound off</button>
+      {% if worker %}<div data-worker>Worker {% if worker.alive %}<span class="pill">running</span>{% else %}<span class="pill red" title="Missions wait until it's back; codec-swarm up restarts it">down</span>{% endif %}{% if worker.pending %} <span class="muted">{{ worker.pending }} queued</span>{% endif %}</div>{% endif %}
       <div>Jev {% if jev_on %}<span class="pill aqua">on</span>{% else %}<span class="pill dim">off</span>{% endif %}</div>
     </div>
   </nav>
