@@ -623,3 +623,21 @@ def input_note(web, kind, ticket):
 def misindented(web, name):
     config = "stack: python\nbranch_flow:\n  base: develop\n  allowlist:\n    - uv run pytest\n"
     web["response"] = web["client"].post(f"/repos/{name}/config", data={"config": config, "domain": ""}, follow_redirects=False)
+
+
+@when(parsers.parse('I send back the spec gate of {ticket} with "{note}"'))
+def send_back_with_note(web, ticket, note):
+    web["note"] = note
+    form = {"lane": "", "answer": "send_back", "note": note, "back": "/inbox"}
+    assert web["client"].post(f"/missions/{ticket}/gates", data=form, follow_redirects=False).status_code == 303
+
+
+@then(parsers.parse('the specifier\'s next step got a handoff from the human with "{note}"'))
+def specifier_got_note(web, note):
+    incoming = [h for role, h in web["service"].backend.requests if role == "specifier"][-1]
+    assert incoming is not None and incoming.from_role == "human" and note in incoming.summary
+
+
+@then(parsers.parse("the activity of {ticket} shows the instructions"))
+def activity_note(web, ticket):
+    assert f"spec gate: send_back · “{web['note']}”" in web["client"].get(f"/missions/{ticket}").text

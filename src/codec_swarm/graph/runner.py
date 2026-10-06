@@ -81,7 +81,8 @@ class MissionRunner:
                 )
             return await self._advance(graph, thread, state)
 
-    async def answer(self, thread: str, answer: str) -> RunResult:
+    async def answer(self, thread: str, answer: str, note: str = "") -> RunResult:
+        """Resume a gate. A note travels with a send-back as instructions for the role that picks the work up."""
         async with self._graph() as graph:
             snapshot = await graph.aget_state(self._config(thread))
             if not snapshot.interrupts:
@@ -89,8 +90,8 @@ class MissionRunner:
             gate = snapshot.interrupts[0].value
             ticket = snapshot.values["mission"]["ticket"]
             lane = snapshot.values["mission"]["repo"]
-            self._events.append(ticket, "gate.resolved", {"kind": gate["kind"], "lane": lane, "answer": answer})
-            return await self._advance(graph, thread, Command(resume=answer))
+            self._events.append(ticket, "gate.resolved", {"kind": gate["kind"], "lane": lane, "answer": answer, **({"note": note} if note else {})})
+            return await self._advance(graph, thread, Command(resume={"answer": answer, "note": note} if note else answer))
 
     async def recover(self, thread: str) -> RunResult:
         """Continue from the last checkpoint after the process died mid-step."""

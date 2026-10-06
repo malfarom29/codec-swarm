@@ -133,10 +133,14 @@ def build_graph(
             if kind is GateKind.SPEC and mission.autonomy is Autonomy.AUTO:
                 return {"next": on_approve(state)}
             trail = state.get("trail", [])
-            answer = interrupt({"kind": kind.value, "after": trail[-1] if trail else None, "verdict": state.get("verdict")})
+            reply = interrupt({"kind": kind.value, "after": trail[-1] if trail else None, "verdict": state.get("verdict")})
+            answer, instructions = (reply.get("answer"), (reply.get("note") or "").strip()) if isinstance(reply, dict) else (reply, "")
             if answer == APPROVE:
                 return {"next": on_approve(state)}
-            note = Handoff(from_role="human", summary=f"Sent back at the {kind.value} gate.", send_back=True)
+            summary = f"Sent back at the {kind.value} gate."
+            if instructions:
+                summary += f"\n\nInstructions from the human, which come before anything else in this handoff:\n{instructions}"
+            note = Handoff(from_role="human", summary=summary, send_back=True)
             return {"next": on_send_back(state), "handoffs": [note.model_dump()]}
 
         return run

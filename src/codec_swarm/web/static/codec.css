@@ -179,3 +179,6 @@ form.stack textarea { width: 100%; }
 @media (max-width: 760px) { .baserow { grid-template-columns: 1fr; } }
 .soundtoggle { font: 12px var(--mono); padding: 3px 8px; margin-bottom: 8px; color: var(--muted); }
 .soundtoggle.on { color: var(--bg); background: var(--green); border-color: var(--green); }
+.gate .actions { flex-wrap: wrap; align-items: flex-start; }
+.gate .actions textarea, .sendback textarea { flex: 1 1 260px; min-width: 0; font-size: 12.5px; }
+.sendback { align-items: flex-start; flex-wrap: wrap; }

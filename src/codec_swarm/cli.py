@@ -95,7 +95,8 @@ async def run_mission(args: argparse.Namespace) -> int:
         for lane, gate_info in waiting:
             answer = _ask(lane, gate_info, args.yes)
             if answer is not None:
-                result = await service.answer(args.ticket, lane, answer)
+                note = input("  Instructions for whoever picks it up (optional, Enter to skip): ").strip() if answer == SEND_BACK else ""
+                result = await service.answer(args.ticket, lane, answer, note)
                 seen = _print_events(service.events, args.ticket, seen)
                 break  # the mission changed: re-read which gates are open
         else:

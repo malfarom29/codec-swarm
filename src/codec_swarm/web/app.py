@@ -59,7 +59,8 @@ def _line(e: Event) -> str | None:
     if e.kind == "gate.opened":
         return f"{lane}{p.get('kind')} gate opened"
     if e.kind == "gate.resolved":
-        return f"{lane}{p.get('kind')} gate: {p.get('answer')}"
+        note = f" · “{p['note'][:160]}”" if p.get("note") else ""
+        return f"{lane}{p.get('kind')} gate: {p.get('answer')}{note}"
     if e.kind == "decision" and p.get("source") == "jev":
         return f"{lane}{who}: Jev picked {p.get('next')} for {p.get('slot')}"
     if e.kind in ("lane.started", "lane.pushed", "lane.failed", "pr.opened", "mission.blocked", "mission.error", "mission.planned"):
@@ -513,8 +514,11 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         return RedirectResponse(f"/repos/{name}?saved=1", status_code=303)
 
     @app.post("/missions/{ticket}/gates")
-    async def answer_gate(background: BackgroundTasks, ticket: str, lane: str = Form(""), answer: str = Form(...), back: str = Form("")):
-        background.add_task(in_background, ticket, lambda: service.answer(ticket, lane or None, answer))
+    async def answer_gate(
+        background: BackgroundTasks, ticket: str, lane: str = Form(""), answer: str = Form(...), back: str = Form(""), note: str = Form(""),
+    ):
+        note = note.strip() if answer == "send_back" else ""
+        background.add_task(in_background, ticket, lambda: service.answer(ticket, lane or None, answer, note))
         return RedirectResponse(back or f"/missions/{ticket}", status_code=303)
 
     # --- live feed --------------------------------------------------------------

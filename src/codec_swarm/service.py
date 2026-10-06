@@ -178,11 +178,11 @@ class MissionService:
             finally:
                 self._log_jev(runtime)
 
-    async def answer(self, ticket: str, lane: str | None, answer: str) -> MissionResult:
+    async def answer(self, ticket: str, lane: str | None, answer: str, note: str = "") -> MissionResult:
         runtime = await self.runtime(ticket)
         async with runtime.lock:
             try:
-                return await runtime.coordinator.answer(ticket, lane, answer)
+                return await runtime.coordinator.answer(ticket, lane, answer, note)
             finally:
                 self._log_jev(runtime)
 

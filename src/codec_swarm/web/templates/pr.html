@@ -28,6 +28,7 @@
 {% if gate %}
 <form method="post" action="/missions/{{ m.ticket }}/gates" class="sendback">
   <input type="hidden" name="lane" value="{{ pr.repo }}"><input type="hidden" name="back" value="/missions/{{ m.ticket }}">
+  <textarea name="note" rows="2" placeholder="What should the coder change? (optional)" aria-label="Instructions for the coder"></textarea>
   <button name="answer" value="send_back">Send back to the coder</button>
   <button name="answer" value="approve" title="Accept the lane without pushing or merging yet">Accept, decide later</button>
 </form>

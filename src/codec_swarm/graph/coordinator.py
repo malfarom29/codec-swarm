@@ -83,11 +83,11 @@ class MissionCoordinator:
         result = await self._planning.start(plan, labels if labels is not None else {}, thread=mission.ticket)
         return await self._advance(plan, result)
 
-    async def answer(self, ticket: str, lane: str | None, answer: str) -> MissionResult:
+    async def answer(self, ticket: str, lane: str | None, answer: str, note: str = "") -> MissionResult:
         if lane is None:
-            result = await self._planning.answer(ticket, answer)
+            result = await self._planning.answer(ticket, answer, note)
         else:
-            await self._lanes.answer(lane_thread(ticket, lane), answer)
+            await self._lanes.answer(lane_thread(ticket, lane), answer, note)
             result = await self._planning.status(ticket)
         return await self._advance(Mission.model_validate(result.mission), result)
 

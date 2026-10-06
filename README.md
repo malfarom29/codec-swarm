@@ -53,7 +53,7 @@ uv run codec-swarm up           # dashboard on http://127.0.0.1:8765
    - **Gated** (default): stops at the spec and PR gates.
    - **Auto:** stops only when the judge isn't sure.
    - **Manual:** stops after every step.
-3. **Inbox.** Approve the spec, or send it back.
+3. **Inbox.** Approve the spec, or send it back. A send-back can carry instructions, which reach the role that picks the work up as part of its incoming handoff.
 4. **Follow the work.** The board shows missions *by stage* or *by agent*. A mission's page has tabs:
    - **Activity**
    - **Agents:** each role's output, a box to message that role at its next step, and `claude --resume` to attach to its session
