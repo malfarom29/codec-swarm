@@ -83,7 +83,10 @@ class MissionService:
     async def build(self, request: MissionRequest, pack_name: str | None = None) -> MissionRuntime:
         standard = load_pack("codec-standard")
         repos = [(url, repo_name(url)) for url in request.repo_urls]
-        configs = {name: load_repo_config(self._workspace.clone(url, name), standard, local_dir=self.repos.local_dir) for url, name in repos}
+        def clone_all() -> dict[str, Any]:  # git clone/fetch: off the event loop, so the dashboard stays responsive
+            return {name: load_repo_config(self._workspace.clone(url, name), standard, local_dir=self.repos.local_dir) for url, name in repos}
+
+        configs = await anyio.to_thread.run_sync(clone_all)
         primary = configs[repos[0][1]]
         names = tuple(name for _, name in repos)
         mission = Mission(
@@ -104,10 +107,14 @@ class MissionService:
                 pack_name = choice.next
         pack = load_pack(pack_name)
         flows = {name: self._flow(name, configs[name].branch_flow, request.bases.get(name)) for _, name in repos}
-        lanes = {
-            (request.ticket, name): self._workspace.prepare_lane(url, name, request.ticket, request.title, flows[name])
-            for url, name in repos
-        }
+
+        def prepare_all() -> dict[tuple[str, str], Any]:
+            return {
+                (request.ticket, name): self._workspace.prepare_lane(url, name, request.ticket, request.title, flows[name])
+                for url, name in repos
+            }
+
+        lanes = await anyio.to_thread.run_sync(prepare_all)
         judged = {
             name: LaneUnderJudgement(worktree=lanes[(request.ticket, name)].path, base=lanes[(request.ticket, name)].base, checks=configs[name].checks)
             for name in names

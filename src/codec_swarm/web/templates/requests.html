@@ -3,7 +3,7 @@
 {% block main %}
 <h1>My requests</h1>
 <p class="sub">Each thing you asked for, where it is, and anything the agents asked you.</p>
-<div hx-get="/requests" hx-trigger="sse:change" hx-select="#requests" hx-target="this" hx-swap="innerHTML">
+<div hx-get="/requests" hx-trigger="codec:change from:body" hx-select="#requests" hx-target="this" hx-swap="innerHTML">
 <div id="requests">
 {% for m, step, questions in rows %}
 <article class="panel request" data-request="{{ m.ticket }}" data-step="{{ step }}">

@@ -65,5 +65,7 @@
   try {
     const feed = new EventSource(`/events/stream?since=${since}`);
     feed.addEventListener("notify", (e) => { try { notify(JSON.parse(e.data)); } catch { /* a malformed note is skipped */ } });
+    // The page's only live connection: htmx refreshes whatever listens for codec:change.
+    feed.addEventListener("change", () => window.htmx?.trigger(document.body, "codec:change"));
   } catch { /* no live notifications without EventSource */ }
 })();

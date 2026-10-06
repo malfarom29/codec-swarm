@@ -9,6 +9,7 @@ import inspect
 import operator
 from typing import Annotated, Any, Callable, TypedDict
 
+import anyio
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
@@ -85,7 +86,7 @@ def build_graph(
             emit.append(mission, "decision", {"slot": "next_role", **decision.model_dump()}, role=role)
             if recorder is not None:
                 step = len(state.get("handoffs", [])) + 1
-                sha = recorder.record(mission, step, handoff, decision.next)
+                sha = await anyio.to_thread.run_sync(recorder.record, mission, step, handoff, decision.next)  # git
                 handoff = handoff.model_copy(update={"commit_sha": sha})
             return {"trail": [role], "handoffs": [handoff.model_dump()], "next": decision.next}
 
@@ -109,7 +110,8 @@ def build_graph(
         update: MissionState = {"trail": ["judge"], "verdict": record, "next": nxt, "reworks": reworks}
         if publisher is not None and nxt in ("done", "pr_gate", "review_gate"):
             # The local PR is what I review at the gate, so it exists before the gate opens.
-            url = publisher.prepare(mission, [Handoff.model_validate(h) for h in state["handoffs"]], record)
+            handoffs = [Handoff.model_validate(h) for h in state["handoffs"]]
+            url = await anyio.to_thread.run_sync(publisher.prepare, mission, handoffs, record)
             emit.append(mission, "pr.local", {"url": url})
             update["pr_url"] = url
         if nxt == pack.rework_role:
@@ -121,7 +123,7 @@ def build_graph(
                 send_back=True,
             )
             if recorder is not None:
-                sha = recorder.record(mission, len(state.get("handoffs", [])) + 1, handoff, nxt)
+                sha = await anyio.to_thread.run_sync(recorder.record, mission, len(state.get("handoffs", [])) + 1, handoff, nxt)
                 handoff = handoff.model_copy(update={"commit_sha": sha})
             update["handoffs"] = [handoff.model_dump()]
         return update

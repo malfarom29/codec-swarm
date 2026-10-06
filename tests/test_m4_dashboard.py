@@ -641,3 +641,14 @@ def specifier_got_note(web, note):
 @then(parsers.parse("the activity of {ticket} shows the instructions"))
 def activity_note(web, ticket):
     assert f"spec gate: send_back · “{web['note']}”" in web["client"].get(f"/missions/{ticket}").text
+
+
+@when("I reconnect to the live feed having seen every event")
+def reconnect(web):
+    last = web["service"].events.list()[-1].id
+    web["feed"] = web["client"].get("/events/stream?since=0&once=true", headers={"Last-Event-ID": str(last)}).text
+
+
+@then("it sends nothing")
+def sends_nothing(web):
+    assert "event:" not in web["feed"]

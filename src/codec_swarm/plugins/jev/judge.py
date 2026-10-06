@@ -7,6 +7,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+import anyio
 from pydantic import BaseModel
 from typesafe_sdk import Noul, TypeSafeError
 
@@ -55,6 +56,12 @@ def _diff(worktree: Path, base: str) -> tuple[str, str]:
     return git("diff", "--stat", spec), git("diff", spec, "--", ".", ":(exclude).swarm")[:MAX_DIFF_CHARS]
 
 
+def _gather(lane: LaneUnderJudgement) -> tuple[list[tuple[Check, bool, str]], list[tuple[str, str]], tuple[str, str], list[dict[str, object]]]:
+    results = [(check, *run_check(check, lane.worktree)) for check in lane.checks]
+    tests = [t for check in lane.checks for t in junit_results(lane.worktree, check)]
+    return results, load_scenarios(lane.worktree, lane.base), _diff(lane.worktree, lane.base), tests
+
+
 class JevJudge:
     def __init__(self, ask: SystemOne, lane_for: Callable[[Mission], LaneUnderJudgement]) -> None:
         self._ask = ask
@@ -62,11 +69,8 @@ class JevJudge:
 
     async def evaluate(self, mission: Mission, handoffs: list[Handoff]) -> Verdict:
         lane = self._lane_for(mission)
-        results = [(check, *run_check(check, lane.worktree)) for check in lane.checks]
+        results, scenarios, (stat, diff), tests = await anyio.to_thread.run_sync(_gather, lane)  # checks and git block
         failed = tuple(check.id for check, ok, _ in results if not ok)
-        scenarios = load_scenarios(lane.worktree, lane.base)
-        stat, diff = _diff(lane.worktree, lane.base)
-        tests = [t for check in lane.checks for t in junit_results(lane.worktree, check)]
         state = {
             "ticket": {"id": mission.ticket, "title": mission.title, "description": mission.description},
             "checks": [{"id": c.id, "passed": ok, "output_tail": tail} for c, ok, tail in results],

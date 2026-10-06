@@ -3,6 +3,6 @@
 {% block main %}
 <p><a href="/">← Missions</a></p>
 <div x-data="{ tab: new URLSearchParams(location.search).get('tab') || 'activity' }">
-  <div hx-get="/partials/missions/{{ m.ticket }}" hx-trigger="sse:change" hx-swap="innerHTML">{% include "_mission.html" %}</div>
+  <div hx-get="/partials/missions/{{ m.ticket }}" hx-trigger="codec:change from:body" hx-swap="innerHTML">{% include "_mission.html" %}</div>
 </div>
 {% endblock %}

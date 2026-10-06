@@ -3,5 +3,5 @@
 {% block main %}
 <h1>Inbox</h1>
 <p class="sub">Every gate waiting on you, across missions. Approving opens the next step; sending back returns the lane to its coder.</p>
-<div hx-get="/partials/inbox" hx-trigger="sse:change" hx-swap="innerHTML">{% include "_inbox.html" %}</div>
+<div hx-get="/partials/inbox" hx-trigger="codec:change from:body" hx-swap="innerHTML">{% include "_inbox.html" %}</div>
 {% endblock %}

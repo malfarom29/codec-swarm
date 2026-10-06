@@ -8,6 +8,8 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
 
+import anyio
+
 from codec_swarm.domain import Handoff, Mission, Verdict
 from codec_swarm.harness.config import Check
 
@@ -16,6 +18,7 @@ TAIL_LINES = 15
 
 
 def run_check(check: Check, worktree: Path) -> tuple[bool, str]:
+    """Blocking; async callers run it in a worker thread so a long test run never stalls the event loop."""
     try:
         env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}  # use the target repo's environment
         proc = subprocess.run(check.run, shell=True, cwd=worktree, env=env, capture_output=True, text=True, timeout=CHECK_TIMEOUT_S)
@@ -58,7 +61,7 @@ class ChecksOnlyJudge:
         failed: list[str] = []
         notes: list[str] = []
         for check in checks:
-            ok, tail = run_check(check, worktree)
+            ok, tail = await anyio.to_thread.run_sync(run_check, check, worktree)
             notes.append(f"{check.id}: {'pass' if ok else 'FAIL'}" + ("" if ok else f"\n{tail}"))
             if not ok:
                 failed.append(check.id)

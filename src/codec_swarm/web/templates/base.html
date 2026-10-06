@@ -9,7 +9,6 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;600&display=swap">
   <link rel="stylesheet" href="/static/codec.css?v={{ css_v }}">
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.2/sse.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
 </head>
 <body>
@@ -30,7 +29,7 @@
       <div>Jev {% if jev_on %}<span class="pill aqua">on</span>{% else %}<span class="pill dim">off</span>{% endif %}</div>
     </div>
   </nav>
-  <main hx-ext="sse" sse-connect="/events/stream?since={{ last_id }}">
+  <main>
     {% block main %}{% endblock %}
   </main>
 </div>

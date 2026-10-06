@@ -200,3 +200,9 @@ Feature: M4 dashboard
     When I send back the spec gate of CODEC-1750 with "Cover negative amounts too"
     Then the specifier's next step got a handoff from the human with "Cover negative amounts too"
     And the activity of CODEC-1750 shows the instructions
+
+  Scenario: A reconnecting live feed resumes after the last event it saw
+    Given I am signed in
+    And mission CODEC-1760 "Add from_cents" on codec-swarm-sandbox is waiting at its spec gate
+    When I reconnect to the live feed having seen every event
+    Then it sends nothing

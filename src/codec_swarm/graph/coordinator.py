@@ -119,7 +119,7 @@ class MissionCoordinator:
             if not ready:
                 break
             started: dict[str, LaneResult] = {}
-            branches = self._push({d for r in ready for d in deps[r]}, plan.ticket)
+            branches = await anyio.to_thread.run_sync(self._push, {d for r in ready for d in deps[r]}, plan.ticket)  # git push
 
             async def run(repo: str) -> None:
                 self._events.append(plan.ticket, "lane.started", {"lane": repo, "after": sorted(deps[repo])})

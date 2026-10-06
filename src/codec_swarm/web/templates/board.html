@@ -9,5 +9,5 @@
   </div>
 </div>
 {% include "_jira_bar.html" %}
-<div hx-get="/partials/board?view={{ view }}" hx-trigger="sse:change" hx-swap="innerHTML">{% include "_board.html" %}</div>
+<div hx-get="/partials/board?view={{ view }}" hx-trigger="codec:change from:body" hx-swap="innerHTML">{% include "_board.html" %}</div>
 {% endblock %}

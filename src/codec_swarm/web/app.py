@@ -524,17 +524,21 @@ def create_app(service: MissionService, token: str) -> FastAPI:
     # --- live feed --------------------------------------------------------------
 
     @app.get("/events/stream")
-    async def stream(since: int = 0, once: bool = False):
+    async def stream(request: Request, since: int = 0, once: bool = False):
+        # A reconnecting EventSource sends the last id it saw; resume there so no note (or sound) repeats.
+        resumed = request.headers.get("last-event-id", "")
+        start = int(resumed) if resumed.isdigit() else since
+
         async def changes():
-            last = since
+            last = start
             while True:
                 rows = service.events.list(since=last)
                 if rows:
                     last = rows[-1].id
                     for row in rows:
                         if (note := notification(row)) is not None:
-                            yield {"event": "notify", "data": json.dumps(note)}
-                    yield {"event": "change", "data": str(last)}
+                            yield {"event": "notify", "data": json.dumps(note), "id": str(row.id)}
+                    yield {"event": "change", "data": str(last), "id": str(last)}
                     if once:
                         return
                 elif once:
