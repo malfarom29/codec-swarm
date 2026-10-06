@@ -178,3 +178,18 @@ Feature: M4 dashboard
     When I start mission CODEC-1731 on billing from no-such-branch
     Then the form says "billing has no branch 'no-such-branch' on origin"
     And no mission CODEC-1731 was started
+
+  Scenario: The live feed asks for a sound when a gate opens and when a PR is ready
+    Given I am signed in
+    And mission CODEC-1740 "Add from_cents" on codec-swarm-sandbox is waiting at its pr gate
+    When I read the live feed since event 0 once
+    Then it sends an input notification for the spec gate of CODEC-1740
+    And it sends an input notification for the pr gate of CODEC-1740
+
+  Scenario: A local config with a misplaced key is refused
+    Given I am signed in
+    And a local origin repo "billing" with no swarm config
+    And I added that repo on the Repos page
+    When I save billing's local config with the allowlist indented under branch_flow
+    Then the save is refused with "Extra inputs are not permitted"
+    And billing has no local config file

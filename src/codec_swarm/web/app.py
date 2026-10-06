@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 import subprocess
 import sys
@@ -89,6 +90,21 @@ def _terminal_line(e: Event) -> str | None:
         return f"▲ gate {p.get('action')}: {p.get('reason')}"
     if e.kind == "cost":
         return f"✓ {p.get('turns')} turns · ${p.get('cost_usd') or 0:.3f}"
+    return None
+
+
+def notification(e: Event) -> dict[str, str] | None:
+    """What deserves a sound: anything waiting on me, and a lane whose PR is ready."""
+    lane = e.payload.get("lane") or ""
+    where = f"{e.mission}{' · ' + lane if lane else ''}"
+    if e.kind == "gate.opened":
+        kind = e.payload.get("kind", "")
+        what = {"spec": "the spec is ready for your OK", "pr": "the local PR is ready for review", "review": "the judge wants your review", "handoff": "a step needs you"}.get(kind, f"{kind} gate")
+        return {"kind": "input", "title": where, "body": what, "url": f"/missions/{e.mission}/prs/{lane}" if kind in ("pr", "review") and lane else "/inbox"}
+    if e.kind in ("mission.blocked", "mission.error", "lane.failed"):
+        return {"kind": "input", "title": where, "body": "stopped: " + str(e.payload.get("reason") or e.payload.get("error") or "needs a look")[:140], "url": f"/missions/{e.mission}"}
+    if e.kind == "mission.done" and e.payload.get("pr_url"):
+        return {"kind": "done", "title": where, "body": "PR ready", "url": e.payload["pr_url"]}
     return None
 
 
@@ -193,7 +209,8 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         return rows[-1].id if rows else 0
 
     def render(request: Request, name: str, **context: Any) -> HTMLResponse:
-        css_version = int((HERE / "static" / "codec.css").stat().st_mtime)  # a changed stylesheet is never served from cache
+        # A changed stylesheet or script is never served from cache.
+        css_version = int(max((HERE / "static" / name).stat().st_mtime for name in ("codec.css", "codec.js")))
         jev_on = jev_available() and service.settings.orchestration().jev_enabled
         return templates.TemplateResponse(request, name, {"last_id": last_id(), "jev_on": jev_on, "css_v": css_version, **context})
 
@@ -510,6 +527,9 @@ def create_app(service: MissionService, token: str) -> FastAPI:
                 rows = service.events.list(since=last)
                 if rows:
                     last = rows[-1].id
+                    for row in rows:
+                        if (note := notification(row)) is not None:
+                            yield {"event": "notify", "data": json.dumps(note)}
                     yield {"event": "change", "data": str(last)}
                     if once:
                         return

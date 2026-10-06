@@ -607,3 +607,19 @@ def form_says(web, text):
 @then(parsers.parse("no mission {ticket} was started"))
 def not_started(web, ticket):
     assert web["service"].events.list(ticket) == []
+
+
+@then(parsers.parse("it sends an input notification for the {kind} gate of {ticket}"))
+def input_note(web, kind, ticket):
+    import json
+
+    notes = [json.loads(line.removeprefix("data: ")) for block in web["feed"].split("\r\n\r\n") if "event: notify" in block
+             for line in block.splitlines() if line.startswith("data: ")]
+    expected = {"spec": "the spec is ready for your OK", "pr": "the local PR is ready for review"}[kind]
+    assert any(n["kind"] == "input" and n["title"].startswith(ticket) and n["body"] == expected for n in notes), notes
+
+
+@when(parsers.parse("I save {name}'s local config with the allowlist indented under branch_flow"))
+def misindented(web, name):
+    config = "stack: python\nbranch_flow:\n  base: develop\n  allowlist:\n    - uv run pytest\n"
+    web["response"] = web["client"].post(f"/repos/{name}/config", data={"config": config, "domain": ""}, follow_redirects=False)

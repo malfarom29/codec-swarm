@@ -39,29 +39,30 @@ READ_ONLY_COMMANDS = (
 OUTPUT_FILTERS = ("head", "tail", "grep", "wc", "sort", "uniq")
 
 
-class BranchFlow(BaseModel, frozen=True):
+# extra="forbid": a misindented key (say, allowlist under branch_flow) is an error, not silently ignored.
+class BranchFlow(BaseModel, frozen=True, extra="forbid"):
     base: str = "develop"
     branch: str = "feature/{ticket}-{slug}"
 
 
-class Report(BaseModel, frozen=True):
+class Report(BaseModel, frozen=True, extra="forbid"):
     kind: str  # junit | mutation
     path: str
 
 
-class Check(BaseModel, frozen=True):
+class Check(BaseModel, frozen=True, extra="forbid"):
     id: str
     run: str
     report: Report | None = None
     min: float | None = None
 
 
-class RoleExtras(BaseModel, frozen=True):
+class RoleExtras(BaseModel, frozen=True, extra="forbid"):
     extra_mcp: tuple[str, ...] = ()
     extra_skills: tuple[str, ...] = ()
 
 
-class RepoConfig(BaseModel, frozen=True):
+class RepoConfig(BaseModel, frozen=True, extra="forbid"):
     version: int = 1
     stack: str
     pack: str = "codec-standard"

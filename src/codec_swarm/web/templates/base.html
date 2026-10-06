@@ -25,11 +25,15 @@
     <a href="/harness" class="{{ 'active' if here == '/harness' }}">Harness</a>
     <a href="/orchestration" class="{{ 'active' if here == '/orchestration' }}">Orchestration</a>
     <a href="/jira" class="{{ 'active' if here == '/jira' }}">Jira</a>
-    <div class="foot">Jev {% if jev_on %}<span class="pill aqua">on</span>{% else %}<span class="pill dim">off</span>{% endif %}</div>
+    <div class="foot">
+      <button type="button" class="soundtoggle" id="sound-toggle" aria-pressed="false" title="Play a sound when your input is needed or a PR is ready">Sound off</button>
+      <div>Jev {% if jev_on %}<span class="pill aqua">on</span>{% else %}<span class="pill dim">off</span>{% endif %}</div>
+    </div>
   </nav>
   <main hx-ext="sse" sse-connect="/events/stream?since={{ last_id }}">
     {% block main %}{% endblock %}
   </main>
 </div>
+<script src="/static/codec.js?v={{ css_v }}" data-since="{{ last_id }}"></script>
 </body>
 </html>
