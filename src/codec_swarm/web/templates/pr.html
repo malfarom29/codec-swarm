@@ -13,6 +13,7 @@
   </div>
 </div>
 {% if error %}<div class="panel note bad" data-error>{{ error }}</div>{% endif %}
+{% if pr.squash_error %}<div class="panel note" data-squash-error><strong>Not squashed.</strong> <pre class="prbody">{{ pr.squash_error }}</pre>Set the repo's <span class="mono">commit:</span> rules on the Repos page to match its hooks, then Update from base or restart to squash again.</div>{% endif %}
 {% if done == "merge" %}<div class="panel note">Merged into {{ pr.merged_into }} in codec-swarm's clone. Nothing was pushed; when you're ready:<br><code>git -C ~/.codec-swarm/repos/{{ pr.repo }} push origin {{ pr.merged_into }}</code></div>
 {% elif done == "push" %}<div class="panel note">Pushed and opened: <a href="{{ pr.pushed_url }}" target="_blank" rel="noopener">{{ pr.pushed_url }}</a></div>{% endif %}
 

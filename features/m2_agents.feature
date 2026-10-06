@@ -123,7 +123,7 @@ Feature: M2 real agents
     And the workspace prepared lane CODEC-1423 "Partial refunds"
     And two steps committed code, the last describing the change as "Refunds can now be partial and carry an idempotency key."
     When the publisher prepares the lane's local PR
-    Then the lane branch has one commit "CODEC-1423: Partial refunds" on top of develop
+    Then the lane branch has one commit "feat: Partial refunds" on top of develop
     And the PR description says "Refunds can now be partial and carry an idempotency key." and lists no roles
     And origin does not have the lane branch
 

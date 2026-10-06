@@ -159,7 +159,7 @@ class MissionService:
             return resolve_session(pack, primary, role, self._workspace.mission_dir(m.ticket), m, overrides=overrides_for(role))
 
         backend = ClaudeCodeBackend(session_for, gate, self._sessions)
-        recorder, publisher = WorkspaceRecorder(self._workspace, lanes), GitHubPublisher(lanes, record_dir=self._workspace.record_dir)
+        recorder, publisher = WorkspaceRecorder(self._workspace, lanes), GitHubPublisher(lanes, record_dir=self._workspace.record_dir, commit_rules={n: configs[n].commit for n in names})
 
         def runner(part: str) -> MissionRunner:
             return MissionRunner(self.db, pack.pack, backend, plugins.router, plugins.judge, self.events, recorder=recorder, publisher=publisher, part=part, chat=self.chat)
@@ -247,6 +247,24 @@ class MissionService:
         self.chat.forget_pending(ticket)
         self.events.append(ticket, "mission.restarted", {"removed": removed})
         return await self.start(request)
+
+    async def restart_lane(self, ticket: str, repo: str, note: str = "") -> MissionResult:
+        """Run one lane again from its first role, on a fresh worktree; the approved spec and the other lanes stay.
+        A note reaches that first role with its step's prompt."""
+        if self.is_busy(ticket):
+            raise MissionBusy(f"{ticket} is working right now; restart the lane once it waits at a gate or stops")
+        stored = self.stored_request(ticket)
+        if stored is None or repo not in {repo_name(u) for u in stored[0].repo_urls}:
+            raise KeyError(f"{ticket} has no lane for {repo}")
+        self._runtimes.pop(ticket, None)  # rebuilt below, preparing a fresh worktree for this lane
+        await forget_threads(self.db, [lane_thread(ticket, repo)])
+        branch = await anyio.to_thread.run_sync(self._workspace.discard_lane, ticket, repo)
+        self._sessions.forget(ticket, repo)
+        self.events.append(ticket, "lane.restarted", {"lane": repo, "branch": branch, **({"note": note} if note.strip() else {})})
+        runtime = await self.runtime(ticket)
+        if note.strip():
+            self.chat.send(ticket, repo, load_pack(runtime.pack_name).pack.lane_roles[0], note.strip())
+        return await self.recover(ticket)
 
     async def update_from_base(self, ticket: str, repo: str, resolve_with_coder: bool = False) -> str:
         """Rebase a lane on its newest base. Clean: refresh its local PR and rerun the checks. Conflict: back out,

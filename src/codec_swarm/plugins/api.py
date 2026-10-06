@@ -42,6 +42,10 @@ class Judge(Protocol):
     async def evaluate(self, mission: Mission, handoffs: list[Handoff]) -> Verdict: ...
 
 
+class CommitRejected(RuntimeError):
+    """The repo's git hooks refused a step's commit; the message carries what they printed. The graph sends it back."""
+
+
 class HandoffRecorder(Protocol):
     """Persists a handoff once the router has picked the next role; returns the commit sha, if any."""
 

@@ -70,6 +70,12 @@ uv run codec-swarm up           # dashboard on http://127.0.0.1:8765
 - **Restart:** set the mission's worktrees, local branches, local PRs and agent sessions aside, then run it again from the first role. Pushed branches are kept. Earlier runs' handoffs stay in `~/.codec-swarm/missions/<ticket>.runN/`.
 - **Restart with changes:** the same, starting from the mission's form so you can edit it first.
 
+**When a lane fails,** its row explains why and offers:
+- **Retry:** run the failed step again from the last checkpoint, for example after fixing the repo's config.
+- **Restart this lane:** run it again from its first role on a fresh worktree, with optional instructions. The approved spec and the other lanes stay.
+
+You can also message one of the lane's agents on the Agents tab and then Retry; the message joins that agent's next step.
+
 **Update from base.** Each lane can be rebased onto the newest commit of its base branch:
 - Clean rebase: the local PR is rewritten and the repo's checks run again.
 - Conflict: nothing changes and the conflicting files are listed. If the lane is waiting at its PR or review gate, you can instead send the conflicts to the coder. The base branch is merged in with conflict markers left in place, and the coder is told to resolve them; the orchestrator commits the merge.
@@ -111,6 +117,21 @@ checks:
 allowlist:
   - uv run pytest
 ```
+
+Commit rules go under `commit:` in the same file. The repo's git hooks (husky, commitlint and the like) run on every commit codec-swarm makes:
+
+```yaml
+commit:
+  format: "{type}({scope}): {title}"   # the squash commit's first line; {type} {scope} {ticket} {title}
+  type: null                          # null: the type the agents' commits used most
+  header_max: 100
+  body_width: 100
+  footer: "Refs: {ticket}"
+  rules: |
+    Subjects in Spanish, lower case, no final period. Scopes: cms, documents, 3ds.
+```
+
+`rules` goes into every agent's prompt. If a hook rejects a step's commit, its output goes back to that agent to fix, twice, and then the handoff gate asks you. If a hook refuses the squash commit, the lane keeps its own commits (each already passed the hooks) and the local PR explains why.
 
 Business rules every agent should know go in `~/.codec-swarm/repos.d/<repo>.domain.md`, or in the repo's `.swarm/domain.md`.
 

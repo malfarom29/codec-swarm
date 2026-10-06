@@ -64,6 +64,11 @@ def _line(e: Event) -> str | None:
         return f"{lane}{p.get('kind')} gate: {p.get('answer')}{note}"
     if e.kind == "mission.restarted":
         return "mission restarted from the first role; earlier work was set aside"
+    if e.kind == "lane.restarted":
+        return f"{lane}lane restarted from its first role" + (f" · “{p['note'][:160]}”" if p.get("note") else "")
+    if e.kind == "commit.rejected":
+        first = next((line for line in (p.get("output") or "").splitlines() if "✖" in line or "error" in line.lower()), "")
+        return f"{lane}{who}: the repo's hooks rejected the commit (try {p.get('tries')}){': ' + first.strip() if first else ''}; sent back to {who}"
     if e.kind == "lane.update":  # one line per update from base: up to date, rebased and checked, or conflicting
         return f"{lane}{p.get('message')}"
     if e.kind == "env.note":
@@ -507,6 +512,13 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         prefill = {"ticket": r.ticket, "title": r.title, "description": r.description, "repo_urls": "\n".join(r.repo_urls),
                    "autonomy": r.autonomy.value, "pack": r.pack, "model": r.model or "", "restart": True}
         return render(request, "new_mission.html", prefill=prefill, rows=base_rows(prefill["repo_urls"], r.bases), error="")
+
+    @app.post("/missions/{ticket}/lanes/{repo}/restart")
+    async def restart_lane(background: BackgroundTasks, ticket: str, repo: str, note: str = Form("")):
+        if (refused := busy_redirect(ticket)) is not None:
+            return refused
+        background.add_task(in_background, ticket, lambda: service.restart_lane(ticket, repo, note))
+        return RedirectResponse(f"/missions/{ticket}?{urlencode({'notice': f'Restarting the {repo} lane from its first role.'})}", status_code=303)
 
     @app.post("/missions/{ticket}/lanes/{repo}/update")
     async def update_lane(background: BackgroundTasks, ticket: str, repo: str, resolve: str = Form(""), back: str = Form("")):

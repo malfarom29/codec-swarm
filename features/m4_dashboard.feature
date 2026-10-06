@@ -274,3 +274,10 @@ Feature: M4 dashboard
     When I update codec-payment of CODEC-1784 from its base
     Then the activity of CODEC-1784 says it conflicts in src/refunds.ts
     And the local PR of CODEC-1784 for codec-payment is unchanged
+
+  Scenario: Restarting one lane runs it again with my instructions and keeps the spec
+    Given I am signed in
+    And mission CODEC-1790 "Add from_cents" on codec-swarm-sandbox is waiting at its pr gate
+    When I restart lane codec-swarm-sandbox of CODEC-1790 with "Use the existing Money helpers"
+    Then the backend-coder's first step got "Use the existing Money helpers"
+    And the specifier did not run again

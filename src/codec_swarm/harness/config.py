@@ -62,6 +62,17 @@ class RoleExtras(BaseModel, frozen=True, extra="forbid"):
     extra_skills: tuple[str, ...] = ()
 
 
+class CommitRules(BaseModel, frozen=True, extra="forbid"):
+    """How this repo wants commit messages: what its hooks (commitlint and the like) accept."""
+
+    format: str = "{type}: {title}"  # the squash commit's first line; placeholders {type} {scope} {ticket} {title}
+    type: str | None = None  # None: the type the agents' own commits used most, else feat
+    header_max: int = 100
+    body_width: int = 72
+    footer: str = "Refs: {ticket}"  # empty for none
+    rules: str = ""  # anything else the repo expects; every agent's prompt carries it
+
+
 class RepoConfig(BaseModel, frozen=True, extra="forbid"):
     version: int = 1
     stack: str
@@ -72,6 +83,7 @@ class RepoConfig(BaseModel, frozen=True, extra="forbid"):
     judge: JudgeBands = JudgeBands()
     allowlist: tuple[str, ...] = ()
     roles: dict[str, RoleExtras] = Field(default_factory=dict)
+    commit: CommitRules = CommitRules()
     domain: str | None = None  # business rules; from repos.d/<repo>.domain.md, else the worktree's .swarm/domain.md
 
 

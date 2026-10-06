@@ -14,10 +14,13 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from codec_swarm.domain import Autonomy, Band, GateKind, Handoff, JudgeBands, Mission, Pack
-from codec_swarm.plugins.api import AgentBackend, ChatInbox, EventSink, HandoffRecorder, Judge, Publisher, Router, StepRequest
+from codec_swarm.plugins.api import AgentBackend, ChatInbox, CommitRejected, EventSink, HandoffRecorder, Judge, Publisher, Router, StepRequest
 
 APPROVE = "approve"
 SEND_BACK = "send_back"
+
+
+MAX_COMMIT_RETRIES = 2
 
 
 class MissionState(TypedDict, total=False):
@@ -29,6 +32,7 @@ class MissionState(TypedDict, total=False):
     reworks: int  # judge send-backs so far
     status: str
     pr_url: str | None
+    commit_retries: int  # times in a row the repo's hooks rejected this role's commit
 
 
 def _mission(state: MissionState) -> Mission:
@@ -86,11 +90,29 @@ def build_graph(
             emit.append(mission, "decision", {"slot": "next_role", **decision.model_dump()}, role=role)
             if recorder is not None:
                 step = len(state.get("handoffs", [])) + 1
-                sha = await anyio.to_thread.run_sync(recorder.record, mission, step, handoff, decision.next)  # git
+                try:
+                    sha = await anyio.to_thread.run_sync(recorder.record, mission, step, handoff, decision.next)  # git
+                except CommitRejected as rejected:
+                    return _commit_rejected(mission, role, handoff, str(rejected), state.get("commit_retries", 0) + 1)
                 handoff = handoff.model_copy(update={"commit_sha": sha})
-            return {"trail": [role], "handoffs": [handoff.model_dump()], "next": decision.next}
+            return {"trail": [role], "handoffs": [handoff.model_dump()], "next": decision.next, "commit_retries": 0}
 
         return run
+
+    def _commit_rejected(mission: Mission, role: str, handoff: Handoff, output: str, tries: int) -> MissionState:
+        """The step's work stays in the worktree; the same role gets the hook output and tries again, then a human."""
+        emit.append(mission, "commit.rejected", {"output": output[-3000:], "tries": tries}, role=role)
+        note = Handoff(
+            from_role="orchestrator",
+            summary=(
+                f"The repo's git hooks rejected the commit for your step (try {tries} of {MAX_COMMIT_RETRIES}). Their output:\n\n{output[-3000:]}\n\n"
+                "Fix what they report: the code (lint, formatting, tests) or your commit_message. Your changes are still in the worktree. "
+                "Then finish with your structured handoff again."
+            ),
+            send_back=True,
+            incomplete=tries >= MAX_COMMIT_RETRIES,  # out of tries: the handoff gate asks me
+        )
+        return {"trail": [role], "handoffs": [handoff.model_dump(), note.model_dump()], "next": role, "commit_retries": tries}
 
     async def judge_node(state: MissionState) -> MissionState:
         mission = _mission(state)

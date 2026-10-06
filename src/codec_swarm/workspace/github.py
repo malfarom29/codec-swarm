@@ -6,14 +6,17 @@ or merge it into a local branch without pushing anything. Nothing leaves the mac
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
+import textwrap
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from pydantic import BaseModel
 
 from codec_swarm.domain import Handoff, Mission
+from codec_swarm.harness.config import CommitRules
 from codec_swarm.workspace.lanes import SWARM_IDENTITY, Lane, _normalized, git, lane_spec_files
 
 Runner = Callable[[Sequence[str], str], str]  # (argv, cwd) -> stdout
@@ -41,6 +44,7 @@ class LocalPR(BaseModel):
     pushed_to: str | None = None
     merged_into: str | None = None
     merged_sha: str | None = None
+    squash_error: str | None = None  # why the lane kept its own commits instead of one
 
     def lane(self) -> Lane:
         return Lane(ticket=self.ticket, repo=self.repo, path=self.path, branch=self.branch, base=self.base)
@@ -84,16 +88,50 @@ def pr_body(mission: Mission, handoffs: list[Handoff], verdict: dict | None, lan
     return "\n".join(lines)
 
 
-def squash(lane: Lane, message: str) -> tuple[str, str | None]:
-    """Fold the lane's commits into one on top of where it started. Returns (base sha, squashed sha or None)."""
+CONVENTIONAL = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[^)]+)\))?!?:\s")
+
+
+def squash_message(rules: CommitRules, ticket: str, title: str, description: str, commit_messages: list[str]) -> str:
+    """The squash commit's message in the repo's format: a typed first line, a wrapped body, a footer."""
+    parsed = [m for m in (CONVENTIONAL.match(c) for c in commit_messages if c) if m]
+    common = lambda values: max(set(values), key=values.count) if values else ""  # noqa: E731
+    kind = rules.type or common([m["type"] for m in parsed]) or "feat"
+    scope = common([m["scope"] for m in parsed if m["scope"]])
+    header = rules.format.format(type=kind, scope=scope, ticket=ticket, title=title.strip()).strip()
+    header = header.replace("()", "")  # a {scope} slot with no scope
+    if len(header) > rules.header_max:
+        header = header[: rules.header_max].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    body = []
+    for paragraph in description.strip().split("\n"):
+        if not paragraph.strip():
+            body.append("")
+            continue
+        bullet = re.match(r"^(\s*[-*]\s+)", paragraph)
+        indent = " " * len(bullet.group(1)) if bullet else ""
+        body.append(textwrap.fill(paragraph.strip(), rules.body_width, subsequent_indent=indent, break_long_words=False, break_on_hyphens=False))
+    footer = rules.footer.format(ticket=ticket) if rules.footer else ""
+    return "\n\n".join(part for part in (header, "\n".join(body).strip(), footer) if part)
+
+
+def squash(lane: Lane, message: str) -> tuple[str, str | None, str | None]:
+    """Fold the lane's commits into one on top of where it started. Returns (base sha, head sha or None, error).
+
+    If the repo's hooks refuse the squash commit, the lane keeps its own commits (each passed those hooks)
+    and the error says why, so a picky commit-msg rule never fails a lane that is otherwise done.
+    """
     base_sha = git(lane.path, "merge-base", f"origin/{lane.base}", "HEAD")
+    head = git(lane.path, "rev-parse", "HEAD")
     count = int(git(lane.path, "rev-list", "--count", f"{base_sha}..HEAD"))
     if count == 0:
-        return base_sha, None
+        return base_sha, None, None
     if count > 1 or git(lane.path, "log", "-1", "--format=%B", "HEAD").strip() != message.strip():
         git(lane.path, "reset", "--quiet", "--soft", base_sha)
-        git(lane.path, *SWARM_IDENTITY, "commit", "--quiet", "--allow-empty", "-m", message)
-    return base_sha, git(lane.path, "rev-parse", "HEAD")
+        proc = subprocess.run(["git", *SWARM_IDENTITY, "commit", "--quiet", "--allow-empty", "-m", message], cwd=lane.path, capture_output=True, text=True)
+        if proc.returncode != 0:
+            git(lane.path, "reset", "--quiet", "--soft", head)  # back to the lane's own commits
+            output = "\n".join((proc.stdout + proc.stderr).strip().splitlines()[-15:])
+            return base_sha, head, f"The repo's hooks refused the squash commit, so the lane keeps its {count} commits:\n{output}"
+    return base_sha, git(lane.path, "rev-parse", "HEAD"), None
 
 
 def _worktree_on(clone: Path, branch: str) -> Path | None:
@@ -134,8 +172,12 @@ def merge_for_resolution(lane: Lane) -> list[str]:
 
 
 class GitHubPublisher:
-    def __init__(self, lanes: dict[tuple[str, str], Lane], run: Runner = run_command, record_dir: Callable[[str, str], Path] | None = None) -> None:
+    def __init__(
+        self, lanes: dict[tuple[str, str], Lane], run: Runner = run_command, record_dir: Callable[[str, str], Path] | None = None,
+        commit_rules: dict[str, CommitRules] | None = None,
+    ) -> None:
         self._lanes = lanes
+        self._commit_rules = commit_rules or {}
         self._run = run
         self._record_dir = record_dir or (lambda ticket, repo: lanes[(ticket, repo)].path.parent / ".records" / repo)
 
@@ -169,8 +211,13 @@ class GitHubPublisher:
         lane = self._lanes[(mission.ticket, mission.repo)]
         title = f"{mission.ticket}: {mission.title}"
         body = pr_body(mission, handoffs, verdict, lane)
-        base_sha, sha = squash(lane, f"{title}\n\n{change_description(handoffs)}")
-        pr = LocalPR(ticket=mission.ticket, repo=mission.repo, title=title, path=lane.path, branch=lane.branch, base=lane.base, base_sha=base_sha, sha=sha)
+        rules = self._commit_rules.get(mission.repo, CommitRules())
+        message = squash_message(rules, mission.ticket, mission.title, change_description(handoffs), [h.commit_message for h in handoffs])
+        base_sha, sha, error = squash(lane, message)
+        pr = LocalPR(
+            ticket=mission.ticket, repo=mission.repo, title=title, path=lane.path, branch=lane.branch, base=lane.base,
+            base_sha=base_sha, sha=sha, squash_error=error,
+        )
         self._save(pr, body)
         return f"/missions/{mission.ticket}/prs/{mission.repo}"
 
@@ -209,7 +256,8 @@ class GitHubPublisher:
         try:
             if git(where, "status", "--porcelain", "--untracked-files=no"):
                 raise ValueError(f"{target} has uncommitted changes in {where}; commit or stash them first.")
-            proc = subprocess.run(["git", *SWARM_IDENTITY, "cherry-pick", pr.sha], cwd=where, capture_output=True, text=True)
+            # One squashed commit, or the lane's own commits when the repo's hooks refused the squash.
+            proc = subprocess.run(["git", *SWARM_IDENTITY, "cherry-pick", f"{pr.base_sha}..{pr.sha}"], cwd=where, capture_output=True, text=True)
             if proc.returncode != 0:
                 subprocess.run(["git", "cherry-pick", "--abort"], cwd=where, capture_output=True)
                 raise ValueError(f"The change does not apply cleanly on {target}: {proc.stderr.strip() or proc.stdout.strip()}")

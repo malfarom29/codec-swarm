@@ -845,3 +845,20 @@ def pr_unchanged(web, ticket, repo):
     assert pr.sha == web["pr_before"].sha
     assert subprocess.run(["git", "rev-parse", "HEAD"], cwd=pr.path, capture_output=True, text=True).stdout.strip() == pr.sha
     assert subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=pr.path, capture_output=True, text=True).stdout == ""
+
+
+@when(parsers.parse('I restart lane {repo} of {ticket} with "{note}"'))
+def restart_lane(web, repo, ticket, note):
+    response = web["client"].post(f"/missions/{ticket}/lanes/{repo}/restart", data={"note": note}, follow_redirects=False)
+    assert response.status_code == 303 and "error=" not in response.headers["location"]
+
+
+@then(parsers.parse('the backend-coder\'s first step got "{note}"'))
+def first_step_note(web, note):
+    backend = web["service"].backend
+    assert backend.calls[0] == "backend-coder" and backend.messages[0] == ("backend-coder", (note,))
+
+
+@then("the specifier did not run again")
+def no_specifier(web):
+    assert "specifier" not in web["service"].backend.calls

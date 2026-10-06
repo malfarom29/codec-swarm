@@ -45,6 +45,19 @@
     </div>
   </div>
   {% for g in [lane.gate] if lane.gate %}{% include "_gate.html" %}{% endfor %}
+  {% if lane.status == "failed" %}
+  <div class="panel lanefix" data-lane-fix="{{ repo }}">
+    <div><strong>{{ repo }} stopped.</strong> {% if lane.error %}<span class="mono bad">{{ lane.error[:400] }}</span>{% endif %}</div>
+    <div class="lanefixactions">
+      <form method="post" action="/missions/{{ m.ticket }}/resume"><button {{ "disabled" if busy }} title="Run the failed step again from the last checkpoint, e.g. after fixing the repo's config">Retry</button></form>
+      <form method="post" action="/missions/{{ m.ticket }}/lanes/{{ repo }}/restart" class="restartlane" onsubmit="return confirm('Restart the {{ repo }} lane from its first role? Its worktree and local branch are set aside; the spec and the other lanes stay.')">
+        <textarea name="note" rows="2" placeholder="Instructions for the lane's first role (optional)" aria-label="Instructions for the restarted lane"></textarea>
+        <button {{ "disabled" if busy }}>Restart this lane</button>
+      </form>
+    </div>
+    <p class="muted">Or message one of its agents on the Agents tab and Retry: the message joins that agent's next step.</p>
+  </div>
+  {% endif %}
   {% endfor %}
 </div>
 <div class="tabs" role="tablist">

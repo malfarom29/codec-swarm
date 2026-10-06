@@ -73,6 +73,19 @@ def commands_section(repo: RepoConfig) -> str:
     ])
 
 
+def commit_section(repo: RepoConfig) -> str:
+    rules = repo.commit
+    lines = [
+        "# Commit messages",
+        "",
+        f"Write commit_message in Conventional Commits (type(scope): subject). Keep the first line under {rules.header_max} characters",
+        f"and wrap the body at {rules.body_width}. The repo's git hooks check every commit; one they reject comes back to you.",
+    ]
+    if rules.rules.strip():
+        lines += ["", rules.rules.strip()]
+    return "\n".join(lines)
+
+
 def mission_layer(mission: Mission, scenarios: str | None = None) -> str:
     lines = ["# Layer 5 · Mission", f"Ticket {mission.ticket} on {mission.repo}: {mission.title or 'untitled'}."]
     if mission.description:
@@ -121,6 +134,7 @@ def resolve_session(
         pack.role_prompt(role),
         mission_layer(mission, scenarios),
         commands_section(repo),
+        commit_section(repo),
     ]
     return SessionSpec(
         role=role,

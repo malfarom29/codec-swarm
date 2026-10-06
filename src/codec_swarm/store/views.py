@@ -39,6 +39,7 @@ class LaneView(BaseModel):
     pr_url: str | None = None  # the local PR, reviewed in the dashboard
     pushed_url: str | None = None  # the GitHub PR, once I pushed it
     merged_into: str | None = None  # the local branch I merged it into
+    error: str | None = None  # why the lane stopped, when it failed
     verdicts: list[dict] = []
     current_role: str | None = None
     after: list[str] = []
@@ -111,8 +112,12 @@ def mission_view(events: list[Event]) -> MissionView:
         elif e.kind == "lane.started":
             lane = view.lanes.setdefault(p["lane"], LaneView(repo=p["lane"]))
             lane.status, lane.after = "running", list(p.get("after") or [])
+        elif e.kind == "lane.restarted":
+            view.lanes[p["lane"]] = LaneView(repo=p["lane"])
+            open_gates.pop(p["lane"], None)
         elif e.kind == "lane.failed":
-            view.lanes.setdefault(p["lane"], LaneView(repo=p["lane"])).status = "failed"
+            failed = view.lanes.setdefault(p["lane"], LaneView(repo=p["lane"]))
+            failed.status, failed.error = "failed", p.get("error")
         elif e.kind == "mission.blocked":
             view.blocked = p.get("reason")
         elif e.kind == "gate.opened":

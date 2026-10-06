@@ -195,3 +195,8 @@ form.stack textarea { width: 100%; }
 .updateform { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .updateform .check { font-size: 12px; color: var(--muted); }
 button:disabled { opacity: .45; cursor: not-allowed; }
+.lanefix { border-color: rgba(255, 59, 59, .35); }
+.lanefixactions { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; margin-top: 8px; }
+.lanefixactions form { margin: 0; }
+.restartlane { display: flex; gap: 8px; align-items: flex-start; flex: 1 1 360px; }
+.restartlane textarea { flex: 1; min-width: 0; font-size: 12.5px; }

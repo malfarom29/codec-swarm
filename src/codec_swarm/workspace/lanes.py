@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from codec_swarm.domain import Handoff, Mission
 from codec_swarm.harness.config import BranchFlow
+from codec_swarm.plugins.api import CommitRejected
 
 DEFAULT_ROOT = Path.home() / ".codec-swarm"
 SWARM_IDENTITY = ["-c", "user.name=codec-swarm", "-c", "user.email=codec-swarm@localhost"]
@@ -55,6 +56,25 @@ class Workspace:
     def mission_dir(self, ticket: str) -> Path:
         """Holds every lane worktree of a mission; planning roles work here so they can write each repo's spec."""
         return self.worktrees / ticket
+
+    def discard_lane(self, ticket: str, repo: str) -> str | None:
+        """Remove one lane's worktree and local branch and set its record aside; the rest of the mission stays."""
+        worktree = self.worktrees / ticket / repo
+        branch = None
+        if (worktree / ".git").exists():
+            clone = self.repos / repo
+            branch = subprocess.run(["git", "branch", "--show-current"], cwd=worktree, capture_output=True, text=True).stdout.strip()
+            subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=clone, capture_output=True)
+            if branch:
+                subprocess.run(["git", "branch", "-D", branch], cwd=clone, capture_output=True)
+        shutil.rmtree(worktree, ignore_errors=True)
+        record = self.record_dir(ticket, repo)
+        if record.exists():
+            stamp = 1
+            while record.with_name(f"{repo}.run{stamp}").exists():
+                stamp += 1
+            record.rename(record.with_name(f"{repo}.run{stamp}"))
+        return branch
 
     def discard(self, ticket: str) -> list[str]:
         """Remove a mission's worktrees and their local branches, and set its record aside. Returns what it removed.
@@ -114,7 +134,10 @@ class Workspace:
             git(lane.path, "add", "--all")  # .swarm/ is ignored; a spec an older mission committed is unstaged below
             subprocess.run(["git", "reset", "--quiet", "--", ".swarm"], cwd=lane.path, capture_output=True)
             message = handoff.commit_message or f"chore: {handoff.from_role} changes for {lane.ticket}"
-            git(lane.path, *SWARM_IDENTITY, "commit", "--quiet", "-m", message)
+            proc = subprocess.run(["git", *SWARM_IDENTITY, "commit", "--quiet", "-m", message], cwd=lane.path, capture_output=True, text=True)
+            if proc.returncode != 0:  # usually a hook (lint-staged, commitlint): the agent can fix what it reports
+                output = "\n".join((proc.stdout + proc.stderr).strip().splitlines()[-40:])
+                raise CommitRejected(output or "git commit failed without output")
         record = self.record_dir(lane.ticket, lane.repo)
         folder = record / "handoffs"
         folder.mkdir(parents=True, exist_ok=True)
