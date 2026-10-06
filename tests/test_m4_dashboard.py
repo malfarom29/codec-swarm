@@ -652,3 +652,68 @@ def reconnect(web):
 @then("it sends nothing")
 def sends_nothing(web):
     assert "event:" not in web["feed"]
+
+
+# --- managed environments ---------------------------------------------------------
+
+
+@when(parsers.parse('I save {name}\'s variable {key} as "{value}"'))
+@given(parsers.parse('I save {name}\'s variable {key} as "{value}"'))
+def save_var(web, name, key, value):
+    web["response"] = web["client"].post(f"/repos/{name}/env", data={"op": "set", "key": key, "value": value}, follow_redirects=False)
+    assert web["response"].status_code == 303 and "env_error" not in web["response"].headers["location"]
+
+
+@when(parsers.parse('I paste a .env into {name} with {key} "{value}"'))
+def paste_env(web, name, key, value):
+    response = web["client"].post(f"/repos/{name}/env", data={"op": "import", "text": f"# local\n{key}={value}\n"}, follow_redirects=False)
+    assert "Imported+1+variable" in response.headers["location"]
+
+
+@then(parsers.parse("{name}'s environment lists {first} and {second} masked"))
+def env_listed(web, name, first, second):
+    page = web["client"].get(f"/repos/{name}").text
+    for key in (first, second):
+        assert re.search(rf'data-var="{key}"><td class="mono">{key}</td><td class="mono">••••', page)
+
+
+@then(parsers.parse('the value "{secret}" appears nowhere on the page or in the database'))
+def secret_hidden(web, secret):
+    assert secret not in web["client"].get(f"/repos/{web['repo']}").text
+    dump = "\n".join(sqlite3.connect(web["service"].db).iterdump())
+    assert secret not in dump
+    path = web["service"].root / "env" / f"{web['repo']}.env"
+    assert secret in path.read_text() and stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@given(parsers.parse("{name}'s local config marks it sensitive"))
+def marks_sensitive(web, name):
+    config = "stack: python\nsensitive: true\n"
+    assert web["client"].post(f"/repos/{name}/config", data={"config": config, "domain": ""}, follow_redirects=False).status_code == 303
+
+
+@then(parsers.parse("{name}'s {key} is flagged as a live Stripe key"))
+def flagged(web, name, key):
+    row = re.search(rf'data-var="{key}">(.*?)</tr>', web["client"].get(f"/repos/{name}").text, re.S).group(1)
+    assert "looks like a live Stripe key" in row and "sk_live_51H" not in row
+
+
+@when(parsers.parse('I start mission {ticket} on {name} overriding {key} with "{value}"'))
+def start_with_override(web, ticket, name, key, value):
+    web["override"] = value
+    form = {"ticket": ticket, "title": "Add from_cents", "repo_urls": str(web["origin"]), "pack": "codec-standard", f"env:{name}": f"{key}={value}\n"}
+    response = web["client"].post("/missions", data=form, follow_redirects=False)
+    assert response.status_code == 303, response.text[:300]
+
+
+@then(parsers.parse('{name}\'s lane in {ticket} gets {key} "{value}"'))
+def lane_gets(web, name, ticket, key, value):
+    assert web["service"].envs.for_lane(ticket, name)[key] == value
+
+
+@then(parsers.parse("the mission's stored request names {key} but not its value"))
+def stored_names_only(web, key):
+    request, _ = web["service"].stored_request("CODEC-1770")
+    assert request.env_overrides == {web["repo"]: [key]}
+    dump = "\n".join(sqlite3.connect(web["service"].db).iterdump())
+    assert web["override"] not in dump

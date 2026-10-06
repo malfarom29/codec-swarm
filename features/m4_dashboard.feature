@@ -206,3 +206,31 @@ Feature: M4 dashboard
     And mission CODEC-1760 "Add from_cents" on codec-swarm-sandbox is waiting at its spec gate
     When I reconnect to the live feed having seen every event
     Then it sends nothing
+
+  Scenario: A repo's environment is managed from its page and never shown back
+    Given I am signed in
+    And a local origin repo "billing" with no swarm config
+    And I added that repo on the Repos page
+    And I saved billing's local config with stack python and base develop
+    When I save billing's variable DATABASE_URL as "postgres://app:s3cret-pass@localhost:5432/billing"
+    And I paste a .env into billing with REDIS_URL "redis://localhost:6379"
+    Then billing's environment lists DATABASE_URL and REDIS_URL masked
+    And the value "s3cret-pass" appears nowhere on the page or in the database
+
+  Scenario: A sensitive repo flags values that look like live credentials
+    Given I am signed in
+    And a local origin repo "billing" with no swarm config
+    And I added that repo on the Repos page
+    And billing's local config marks it sensitive
+    When I save billing's variable STRIPE_KEY as "sk_live_51HabcdefghijKLMNOP"
+    Then billing's STRIPE_KEY is flagged as a live Stripe key
+
+  Scenario: A mission can override one value without storing it in the mission
+    Given I am signed in
+    And a local origin repo "billing" with no swarm config
+    And I added that repo on the Repos page
+    And I saved billing's local config with stack python and base develop
+    And I save billing's variable DATABASE_URL as "postgres://localhost/billing"
+    When I start mission CODEC-1770 on billing overriding DATABASE_URL with "postgres://localhost/billing_test"
+    Then billing's lane in CODEC-1770 gets DATABASE_URL "postgres://localhost/billing_test"
+    And the mission's stored request names DATABASE_URL but not its value

@@ -7,6 +7,9 @@
     <datalist id="branches-{{ r.name }}">{% for b in r.branches %}<option value="{{ b }}">{% endfor %}</datalist>
     <span class="muted">{% if r.configured %}configured: {{ r.configured }}{% elif not r.branches %}not cloned yet: leave empty for its configured base{% else %}no config yet{% endif %}</span>
   </label>
+  <details class="envover" data-env-override="{{ r.name }}"><summary>Environment for this mission{% if r.env_keys %} · {{ r.env_keys | length }} from <a href="/repos/{{ r.name }}#env">Repos</a> as {{ r.env_file }}{% endif %}</summary>
+    <textarea name="env:{{ r.name }}" rows="3" spellcheck="false" autocomplete="off" placeholder="KEY=value lines that replace the repo's values for this mission only"></textarea>
+  </details>
   {% endfor %}
 </fieldset>
 {% endif %}

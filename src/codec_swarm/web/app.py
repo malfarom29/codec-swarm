@@ -30,6 +30,7 @@ from codec_swarm.plugins.jev import MODEL as JEV_MODEL
 from codec_swarm.plugins.jira import JiraError
 from codec_swarm.plugins.registry import jev_available
 from codec_swarm.service import MissionRequest, MissionService
+from codec_swarm.workspace.envs import parse as parse_env
 from codec_swarm.workspace.repos import check_name, repo_name
 from codec_swarm.store.settings import Orchestration, RoleOverride
 from codec_swarm.store.events import Event
@@ -61,6 +62,8 @@ def _line(e: Event) -> str | None:
     if e.kind == "gate.resolved":
         note = f" · “{p['note'][:160]}”" if p.get("note") else ""
         return f"{lane}{p.get('kind')} gate: {p.get('answer')}{note}"
+    if e.kind == "env.note":
+        return f"{lane}environment: {p.get('note')}"
     if e.kind == "decision" and p.get("source") == "jev":
         return f"{lane}{who}: Jev picked {p.get('next')} for {p.get('slot')}"
     if e.kind in ("lane.started", "lane.pushed", "lane.failed", "pr.opened", "mission.blocked", "mission.error", "mission.planned"):
@@ -293,6 +296,7 @@ def create_app(service: MissionService, token: str) -> FastAPI:
             rows.append({
                 "name": name, "configured": configured, "branches": service.repos.branches(name),
                 "value": (chosen or {}).get(name) or configured or "",
+                "env_keys": [v.key for v in service.envs.masked(name)], "env_file": service.env_file(name),
             })
         return rows
 
@@ -343,22 +347,24 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         return render(request, "repos.html", rows=rows, used=repo_missions(), error=error)
 
     @app.get("/repos/{name}", response_class=HTMLResponse)
-    async def repo_page(request: Request, name: str, saved: str = ""):
+    async def repo_page(request: Request, name: str, saved: str = "", env: str = "", env_error: str = ""):
         try:
             detail = service.repos.detail(name)
         except ValueError:
             return PlainTextResponse(f"No repo {name}", status_code=404)
         if not detail.cloned and not detail.local_file:
             return PlainTextResponse(f"No repo {name}", status_code=404)
-        return render_repo(request, detail, saved=bool(saved))
+        return render_repo(request, detail, saved=bool(saved), error=env_error, env_note=env)
 
     def render_repo(
         request: Request, detail: Any, error: str = "", config_text: str | None = None, domain_text: str | None = None,
-        status: int = 200, saved: bool = False,
+        status: int = 200, saved: bool = False, env_note: str = "",
     ) -> HTMLResponse:
         text = config_text if config_text is not None else (detail.local_text or ("" if detail.repo_file else service.repos.starter()))
+        sensitive = bool(detail.config and detail.config.sensitive)
         response = render(
             request, "repo.html", r=detail, error=error, config_text=text, saved=saved,
+            env_vars=service.envs.masked(detail.name, sensitive), env_file=service.env_file(detail.name), sensitive=sensitive, env_note=env_note,
             domain_text=domain_text if domain_text is not None else detail.domain_text,
             stacks=service.repos.stacks(), used=repo_missions().get(detail.name, []),
             config_yaml=yaml.safe_dump(detail.config.model_dump(mode="json", exclude={"domain"}), sort_keys=False) if detail.config else "",
@@ -387,8 +393,14 @@ def create_app(service: MissionService, token: str) -> FastAPI:
     ):
         form = await request_.form()
         chosen = {k.removeprefix("base:"): str(v).strip() for k, v in form.items() if k.startswith("base:") and str(v).strip()}
+        env_text = {k.removeprefix("env:"): str(v) for k, v in form.items() if k.startswith("env:") and str(v).strip()}
         rows = base_rows(repo_urls, chosen)
         unknown = [f"{r['name']} has no branch {r['value']!r} on origin" for r in rows if r["branches"] and r["value"] and r["value"] not in r["branches"]]
+        for repo, text in env_text.items():
+            try:
+                parse_env(text)
+            except ValueError as error:
+                unknown.append(f"{repo} overrides: {error}")
         if unknown:
             prefill = {"ticket": ticket, "title": title, "description": description, "repo_urls": repo_urls}
             response = render(request_, "new_mission.html", prefill=prefill, rows=rows, error="; ".join(unknown))
@@ -399,6 +411,7 @@ def create_app(service: MissionService, token: str) -> FastAPI:
             repo_urls=tuple(u.strip() for u in repo_urls.splitlines() if u.strip()),
             autonomy=Autonomy(autonomy), pack=pack, model=model.strip() or None, no_jev=not jev,
             bases={r["name"]: r["value"] for r in rows if r["value"] and r["value"] != r["configured"]},
+            env_overrides={repo: service.envs.set_overrides(ticket.strip(), repo, text) for repo, text in env_text.items() if repo in {r["name"] for r in rows}},
         )
         background.add_task(in_background, request.ticket, lambda: service.start(request))
         return RedirectResponse(f"/missions/{request.ticket}", status_code=303)
@@ -504,6 +517,29 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         except (ValueError, RuntimeError) as error:
             return RedirectResponse(f"/repos?{urlencode({'error': str(error)})}", status_code=303)
         return RedirectResponse(f"/repos/{name}", status_code=303)
+
+    @app.post("/repos/{name}/env")
+    async def repo_env(name: str, op: str = Form(...), key: str = Form(""), value: str = Form(""), text: str = Form(""), filename: str = Form("")):
+        back = f"/repos/{name}"
+        try:
+            check_name(name)
+            if op == "set":
+                service.envs.set(name, key.strip(), value)
+                note = f"Saved {key.strip()}."
+            elif op == "import":
+                names = service.envs.merge(name, text)
+                note = f"Imported {len(names)} variable{'s' if len(names) != 1 else ''}."
+            elif op == "delete":
+                service.envs.delete(name, key)
+                note = f"Deleted {key}."
+            elif op == "file":
+                service.set_env_file(name, filename)
+                note = f"Lanes get {service.env_file(name)}."
+            else:
+                raise ValueError(f"unknown action {op}")
+        except ValueError as error:
+            return RedirectResponse(f"{back}?{urlencode({'env_error': str(error)})}#env", status_code=303)
+        return RedirectResponse(f"{back}?{urlencode({'env': note})}#env", status_code=303)
 
     @app.post("/repos/{name}/config")
     async def save_repo(request: Request, name: str, config: str = Form(""), domain: str = Form("")):

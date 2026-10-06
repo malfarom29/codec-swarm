@@ -7,6 +7,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import anyio
 
@@ -17,10 +18,11 @@ CHECK_TIMEOUT_S = 600
 TAIL_LINES = 15
 
 
-def run_check(check: Check, worktree: Path) -> tuple[bool, str]:
+def run_check(check: Check, worktree: Path, extra_env: dict[str, str] | None = None) -> tuple[bool, str]:
     """Blocking; async callers run it in a worker thread so a long test run never stalls the event loop."""
     try:
         env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}  # use the target repo's environment
+        env.update(extra_env or {})  # the repo's managed environment wins over the server's
         proc = subprocess.run(check.run, shell=True, cwd=worktree, env=env, capture_output=True, text=True, timeout=CHECK_TIMEOUT_S)
     except subprocess.TimeoutExpired:
         return False, f"timed out after {CHECK_TIMEOUT_S}s"
@@ -53,15 +55,16 @@ def junit_results(worktree: Path, check: Check) -> list[dict[str, object]]:
 class ChecksOnlyJudge:
     """Fallback Judge when Jev is off: a failed check sends the lane back, a clean run goes to a human."""
 
-    def __init__(self, checks_for: Callable[[Mission], tuple[Path, tuple[Check, ...]]]) -> None:
-        self._checks_for = checks_for  # mission -> (lane worktree, checks)
+    def __init__(self, checks_for: Callable[[Mission], tuple[Any, ...]]) -> None:
+        self._checks_for = checks_for  # mission -> (lane worktree, checks) or (worktree, checks, env)
 
     async def evaluate(self, mission: Mission, handoffs: list[Handoff]) -> Verdict:
-        worktree, checks = self._checks_for(mission)
+        worktree, checks, *rest = self._checks_for(mission)
+        env = rest[0] if rest else None
         failed: list[str] = []
         notes: list[str] = []
         for check in checks:
-            ok, tail = await anyio.to_thread.run_sync(run_check, check, worktree)
+            ok, tail = await anyio.to_thread.run_sync(run_check, check, worktree, env)
             notes.append(f"{check.id}: {'pass' if ok else 'FAIL'}" + ("" if ok else f"\n{tail}"))
             if not ok:
                 failed.append(check.id)

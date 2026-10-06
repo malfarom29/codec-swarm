@@ -115,7 +115,10 @@ class ClaudeCodeBackend:
         self._env = env
 
     def _options(self, spec: SessionSpec, mission: Mission, model: str, pending: list[AgentEvent]) -> ClaudeAgentOptions:
-        ctx = GateContext(ticket=mission.ticket, repo=mission.repo, role=spec.role, worktree=spec.cwd, autonomy=mission.autonomy)
+        ctx = GateContext(
+            ticket=mission.ticket, repo=mission.repo, role=spec.role, worktree=spec.cwd, autonomy=mission.autonomy,
+            env_files=(spec.env_file,), secret_names=frozenset(spec.env),
+        )
 
         async def can_use_tool(name: str, tool_input: dict[str, Any], _: ToolPermissionContext):
             decision = self._gate.decide(name, tool_input, ctx)
@@ -144,6 +147,7 @@ class ClaudeCodeBackend:
             skills=list(spec.skills),
             allowed_tools=list(spec.allowed_tools),
             setting_sources=list(spec.setting_sources),
+            env=dict(spec.env),
             can_use_tool=can_use_tool,
             hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[pre_tool_use])]},
             max_turns=spec.max_turns,

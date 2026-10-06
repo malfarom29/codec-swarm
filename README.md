@@ -103,6 +103,24 @@ allowlist:
 
 Business rules every agent should know go in `~/.codec-swarm/repos.d/<repo>.domain.md`, or in the repo's `.swarm/domain.md`.
 
+## Environments
+
+Each repo can have its own environment, managed in the **Environment** section of its page on the Repos screen:
+- set a variable, paste a whole `.env` to import it, or delete one;
+- once saved, values are shown masked (`••••` plus the last 4 characters) and are never shown back.
+
+They're stored in `~/.codec-swarm/env/<repo>.env` (mode 600), never in the database, events, handoffs or prompts.
+
+Every lane gets them in two ways:
+- **as a file** in its worktree: `.env` by default, or a name you set per repo, such as `.env.local`. Git ignores it, so it's never committed. If the repo tracks a file with that name, it's left alone and only the second way is used.
+- **as environment variables** for the repo's checks and the agents' sessions.
+
+Agents can use the values but not print them. Reading an env file (`.env.example` and other templates excepted), dumping the environment (`printenv`, `env` and the like) or expanding a managed variable (`$DATABASE_URL`) always asks you.
+
+On **New mission**, each repo has an optional *Environment for this mission* box. `KEY=value` lines there replace single values for that run only. The mission records only the variable names; the values are kept in `~/.codec-swarm/env/missions/<ticket>/`.
+
+For a repo marked `sensitive: true`, values that look like live credentials are flagged: live Stripe keys, AWS access keys, Slack or GitHub tokens, and production hosts.
+
 ## Dashboard settings
 
 - **Harness.** For each role you can override the model (never below the role's floor) and add MCP servers or skills; nothing can be removed. To make a new MCP server available, add it to `mcp_catalog` in the pack and put its token in `.env` as `${env:NAME}`.

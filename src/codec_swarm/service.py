@@ -33,6 +33,9 @@ from codec_swarm.store.views import mission_view
 from codec_swarm.store.settings import JiraSettings, Settings
 from codec_swarm.workspace import Workspace, WorkspaceRecorder
 from codec_swarm.workspace.github import GitHubPublisher, LocalPR
+from codec_swarm.workspace.envs import DEFAULT_FILE as DEFAULT_ENV_FILE
+from codec_swarm.workspace.envs import FILE_NAME as ENV_FILE_NAME
+from codec_swarm.workspace.envs import RepoEnvs, write_env_file
 from codec_swarm.workspace.lanes import DEFAULT_ROOT
 from codec_swarm.workspace.repos import RepoCatalog
 from codec_swarm.workspace.repos import repo_name as repo_name
@@ -51,6 +54,7 @@ class MissionRequest(BaseModel, frozen=True):
     model: str | None = None  # a local override for every role
     no_jev: bool = False
     bases: dict[str, str] = {}  # repo name -> branch the lane starts from, replacing its branch_flow.base
+    env_overrides: dict[str, list[str]] = {}  # repo name -> variables overridden for this mission (names only; values in env/)
 
 
 @dataclass
@@ -74,6 +78,7 @@ class MissionService:
         self._cache = GateCache(self.db)
         self.settings = Settings(self.db)
         self.chat = ChatStore(self.db)
+        self.envs = RepoEnvs(self.root)
         self.jira_transport: Any = None  # tests swap in an httpx.MockTransport
         load_secrets(self.root)
         self._workspace = Workspace(self.root)
@@ -115,8 +120,18 @@ class MissionService:
             }
 
         lanes = await anyio.to_thread.run_sync(prepare_all)
+        lane_env = {name: self.envs.for_lane(request.ticket, name) for name in names}
+
+        def write_env_files() -> dict[str, str | None]:
+            return {name: write_env_file(lanes[(request.ticket, name)].path, self.env_file(name), lane_env[name]) for name in names}
+
+        for name, note in (await anyio.to_thread.run_sync(write_env_files)).items():
+            if note and not any(e.kind == "env.note" and e.payload.get("lane") == name for e in self.events.list(request.ticket)):
+                self.events.append(request.ticket, "env.note", {"lane": name, "note": note})
         judged = {
-            name: LaneUnderJudgement(worktree=lanes[(request.ticket, name)].path, base=lanes[(request.ticket, name)].base, checks=configs[name].checks)
+            name: LaneUnderJudgement(
+                worktree=lanes[(request.ticket, name)].path, base=lanes[(request.ticket, name)].base, checks=configs[name].checks, env=lane_env[name],
+            )
             for name in names
         }
         ask = jev if use_jev else None
@@ -132,8 +147,9 @@ class MissionService:
             return self.local_overrides(pack.pack.name, role, request.model)
 
         def session_for(m: Mission, role: str):
-            if m.repo:  # a lane role works in its repo's worktree
-                return resolve_session(pack, configs[m.repo], role, lanes[(m.ticket, m.repo)].path, m, overrides=overrides_for(role))
+            if m.repo:  # a lane role works in its repo's worktree, with its repo's environment
+                spec = resolve_session(pack, configs[m.repo], role, lanes[(m.ticket, m.repo)].path, m, overrides=overrides_for(role))
+                return spec.model_copy(update={"env": lane_env[m.repo], "env_file": self.env_file(m.repo)})
             return resolve_session(pack, primary, role, self._workspace.mission_dir(m.ticket), m, overrides=overrides_for(role))
 
         backend = ClaudeCodeBackend(session_for, gate, self._sessions)
@@ -146,6 +162,16 @@ class MissionService:
         runtime = MissionRuntime(request, mission, pack_name, plugins.jev, coordinator, jev)
         self._runtimes[request.ticket] = runtime
         return runtime
+
+    def env_file(self, repo: str) -> str:
+        """The file a lane's environment is written to: .env unless I set another for this repo."""
+        return self.settings.get(f"env.{repo}.file") or DEFAULT_ENV_FILE
+
+    def set_env_file(self, repo: str, name: str) -> None:
+        name = name.strip() or DEFAULT_ENV_FILE
+        if not ENV_FILE_NAME.fullmatch(name) or name in (".git", ".swarm"):
+            raise ValueError(f"{name!r} is not a file name codec-swarm can write")
+        self.settings.put(f"env.{repo}.file", name)
 
     def _flow(self, name: str, flow: BranchFlow, base: str | None) -> BranchFlow:
         """The repo's branch flow, starting from the base I picked for this mission if I picked one."""

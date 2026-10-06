@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import anyio
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typesafe_sdk import Noul, TypeSafeError
 
 from codec_swarm.domain import Handoff, Mission, ScenarioResult, Verdict
@@ -27,6 +27,7 @@ class LaneUnderJudgement(BaseModel, frozen=True):
     worktree: Path
     base: str
     checks: tuple[Check, ...]
+    env: dict[str, str] = Field(default_factory=dict, exclude=True, repr=False)  # the repo's managed environment
 
 
 def load_scenarios(worktree: Path, base: str | None = None) -> list[tuple[str, str]]:
@@ -57,7 +58,7 @@ def _diff(worktree: Path, base: str) -> tuple[str, str]:
 
 
 def _gather(lane: LaneUnderJudgement) -> tuple[list[tuple[Check, bool, str]], list[tuple[str, str]], tuple[str, str], list[dict[str, object]]]:
-    results = [(check, *run_check(check, lane.worktree)) for check in lane.checks]
+    results = [(check, *run_check(check, lane.worktree, lane.env)) for check in lane.checks]
     tests = [t for check in lane.checks for t in junit_results(lane.worktree, check)]
     return results, load_scenarios(lane.worktree, lane.base), _diff(lane.worktree, lane.base), tests
 
@@ -86,7 +87,7 @@ class JevJudge:
         try:
             answers = (await self._ask(state, questions)).answers
         except TypeSafeError:
-            fallback = await ChecksOnlyJudge(lambda m: (lane.worktree, lane.checks)).evaluate(mission, handoffs)
+            fallback = await ChecksOnlyJudge(lambda m: (lane.worktree, lane.checks, lane.env)).evaluate(mission, handoffs)
             return fallback.model_copy(update={"source": "checks-only (jev unavailable)"})
         per_scenario = tuple(ScenarioResult(name=name, probability=answers[f"scenario_{i}"].noul) for i, (name, _) in enumerate(scenarios))
         done = answers["done"].noul

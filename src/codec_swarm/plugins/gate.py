@@ -27,6 +27,8 @@ class GateContext(BaseModel, frozen=True):
     role: str
     worktree: Path
     autonomy: Autonomy
+    env_files: tuple[str, ...] = ()  # the lane's managed env file names, beyond the usual .env*
+    secret_names: frozenset[str] = frozenset()  # managed variables the lane's sessions carry
 
 
 class GateDecision(BaseModel, frozen=True):
@@ -49,6 +51,11 @@ ALWAYS_ASK = [
     # Code passed inline can't be judged from the command line, so neither the allowlist nor Jev may approve it.
     (re.compile(r"<<|\b(python3?|node|ruby|perl)\s+-[ce]\b|\b(ba|z)?sh\s+-c\b|\beval\b"), "runs inline code"),
 ]
+# Env files and environment dumps: the app runs on these values, but an agent printing them would send them to
+# the model and into the event log. Templates (.env.example and the like) are fine to read.
+ENV_FILE = re.compile(r"(^|/)\.env(\.[\w.-]+)?$")
+ENV_TEMPLATE = re.compile(r"\.(example|sample|template|dist|defaults)$")
+ENV_DUMP = re.compile(r"(^|[;&|(]\s*)(printenv|env|set|export\s+-p|declare\s+-[px]+|compgen\s+-e)(\s*$|\s*[;&|)])")
 SHELL_CONTROL = re.compile(r"&&|\|\||[;|`<>]|\$\(")
 PIPE = re.compile(r"(?<!\|)\|(?!\|)")
 CHAIN = re.compile(r"&&|;")
@@ -116,18 +123,47 @@ def _bash_leaves_worktree(worktree: Path, command: str) -> bool:
     return False
 
 
+def is_env_file(raw: str, ctx: GateContext) -> bool:
+    name = Path(raw.strip("'\"")).name
+    if ENV_TEMPLATE.search(name):
+        return False
+    return bool(ENV_FILE.search(raw.strip("'\""))) or name in ctx.env_files
+
+
+def _reads_secrets(command: str, ctx: GateContext) -> str | None:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    if any(is_env_file(t, ctx) for t in tokens):
+        return "reads an env file"
+    if ENV_DUMP.search(command):
+        return "prints the environment"
+    for name in ctx.secret_names:
+        if re.search(rf"\$\{{?{re.escape(name)}\b", command):
+            return f"uses the managed variable {name}"
+    return None
+
+
 def hard_rules(tool: str, tool_input: dict[str, Any], ctx: GateContext) -> GateDecision | None:
     """Rules checked before any gate plugin. Returns None when they have nothing to say."""
     if tool in FILE_TOOLS or tool in SEARCH_TOOLS:
         raw = tool_input.get(FILE_TOOLS.get(tool) or SEARCH_TOOLS[tool])
         if raw and not _inside(ctx.worktree, str(raw)):
             return GateDecision(action=Action.DENY, reason=f"{raw} is outside the lane worktree", source="jail")
+        if raw and tool in FILE_TOOLS and is_env_file(str(raw), ctx):
+            return GateDecision(action=Action.ASK, reason="reads or writes an env file", source="always-ask")
+        pattern = str(tool_input.get("glob", ""))
+        if tool == "Grep" and (is_env_file(pattern, ctx) or (".env" in pattern and not ENV_TEMPLATE.search(pattern))):
+            return GateDecision(action=Action.ASK, reason="searches an env file", source="always-ask")
         return GateDecision(action=Action.ALLOW, reason="inside the lane worktree", source="jail")
     if tool == "Bash":
         command = str(tool_input.get("command", ""))
         for pattern, why in ALWAYS_ASK:
             if pattern.search(command):
                 return GateDecision(action=Action.ASK, reason=why, source="always-ask")
+        if why := _reads_secrets(command, ctx):
+            return GateDecision(action=Action.ASK, reason=why, source="always-ask")
         if _bash_leaves_worktree(ctx.worktree, command):
             return GateDecision(action=Action.ASK, reason="touches a path outside the lane worktree", source="always-ask")
     return None

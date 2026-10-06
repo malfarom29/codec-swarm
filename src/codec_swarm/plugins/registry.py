@@ -45,7 +45,7 @@ def build_plugins(
 ) -> Plugins:
     """A missing TYPESAFE_API_KEY turns Jev off whatever the mission asked for."""
     if not (use_jev and (ask is not None or jev_available(env))):
-        judge = ChecksOnlyJudge(lambda m: (lane_for(m).worktree, lane_for(m).checks))
+        judge = ChecksOnlyJudge(lambda m: (lane_for(m).worktree, lane_for(m).checks, lane_for(m).env))
         return Plugins(router=PackOrderRouter(), gate=AllowlistGate(config.allowlist), judge=judge, jev=False)
     ask = ask or JevClient()
     return Plugins(

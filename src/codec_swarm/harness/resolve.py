@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from codec_swarm.domain import Mission
 from codec_swarm.harness.config import OUTPUT_FILTERS, READ_ONLY_COMMANDS, RepoConfig
@@ -49,6 +49,9 @@ class SessionSpec(BaseModel, frozen=True):
     max_turns: int
     allowed_tools: tuple[str, ...] = ()  # always empty: a listed tool would skip the command gate (M0)
     setting_sources: tuple[str, ...] = ("project",)  # the repo's own .claude/ settings and hooks still load
+    # The repo's managed environment: passed to the session, never dumped, logged or put in a prompt.
+    env: dict[str, str] = Field(default_factory=dict, exclude=True, repr=False)
+    env_file: str = ".env"
 
 
 def _unique(*groups: tuple[str, ...]) -> tuple[str, ...]:
