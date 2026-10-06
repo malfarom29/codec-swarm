@@ -557,3 +557,53 @@ def pr_merged(web, branch):
 def mission_merged(web, ticket, branch):
     page = web["client"].get(f"/missions/{ticket}").text
     assert "data-local-pr" in page and f"merged into {branch}" in page
+
+
+# --- base branch per mission ------------------------------------------------------
+
+
+@given(parsers.parse('origin "{name}" also has a branch {branch}'))
+def origin_branch(web, name, branch):
+    _git(web["origin"], "branch", branch)
+
+
+@given(parsers.parse("I saved {name}'s local config with stack {stack} and base {base}"))
+def saved_base(web, name, stack, base):
+    config = f"stack: {stack}\nbranch_flow:\n  base: {base}\n"
+    assert web["client"].post(f"/repos/{name}/config", data={"config": config, "domain": ""}, follow_redirects=False).status_code == 303
+
+
+@when(parsers.parse("I list the bases for {name} on the New mission form"))
+def list_bases(web, name):
+    web["bases"] = web["client"].get("/partials/bases", params={"repo_urls": str(web["origin"])}).text
+
+
+@then(parsers.parse("{name}'s base defaults to {base} and offers {other}"))
+def base_default(web, name, base, other):
+    row = re.search(rf'data-base="{name}">(.*?)</label>', web["bases"], re.S).group(1)
+    assert f'value="{base}"' in row.split("<datalist")[0] and f'<option value="{other}">' in row
+
+
+@when(parsers.parse("I start mission {ticket} on {name} from {base}"))
+def start_from_base(web, ticket, name, base):
+    form = {"ticket": ticket, "title": "Add from_cents", "repo_urls": str(web["origin"]), "pack": "codec-standard", f"base:{name}": base}
+    web["response"] = web["client"].post("/missions", data=form, follow_redirects=False)
+
+
+@then(parsers.parse("mission {ticket} starts {name} from {base}"))
+def started_from(web, ticket, name, base):
+    assert web["response"].status_code == 303
+    request, _ = web["service"].stored_request(ticket)
+    assert request.bases == {name: base}
+
+
+@then(parsers.parse('the form says "{text}"'))
+def form_says(web, text):
+    import html
+
+    assert web["response"].status_code == 400 and text in html.unescape(web["response"].text)
+
+
+@then(parsers.parse("no mission {ticket} was started"))
+def not_started(web, ticket):
+    assert web["service"].events.list(ticket) == []

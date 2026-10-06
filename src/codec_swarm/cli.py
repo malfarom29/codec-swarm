@@ -16,6 +16,7 @@ from codec_swarm.service import MissionRequest, MissionService
 from codec_swarm.store import EventLog
 from codec_swarm.store.metrics import compare, mission_metrics
 from codec_swarm.workspace.lanes import DEFAULT_ROOT
+from codec_swarm.workspace.repos import repo_name
 
 
 def _print_events(events: EventLog, ticket: str, since: int) -> int:
@@ -61,11 +62,24 @@ def _ask(lane: str | None, gate: dict, auto_approve: bool) -> str | None:
             return SEND_BACK
 
 
+def parse_bases(values: list[str], repos: list[str]) -> dict[str, str]:
+    """--base develop (every repo) or --base api=release/1.2 (one repo)."""
+    bases: dict[str, str] = {}
+    for value in values:
+        repo, _, branch = value.rpartition("=")
+        for name in [repo] if repo else repos:
+            if name not in repos:
+                raise SystemExit(f"--base {value}: {name} is not one of this mission's repos ({', '.join(repos)})")
+            bases[name] = branch
+    return bases
+
+
 async def run_mission(args: argparse.Namespace) -> int:
     service = MissionService(Path(args.root))
     request = MissionRequest(
         ticket=args.ticket, title=args.title, repo_urls=tuple(args.repo_url), description=args.description,
         autonomy=Autonomy(args.autonomy), pack=args.pack, model=args.model, no_jev=args.no_jev,
+        bases=parse_bases(args.base, [repo_name(u) for u in args.repo_url]),
     )
     seen = max((e.id for e in service.events.list(args.ticket)), default=0)
     if args.recover:
@@ -151,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--ticket", required=True)
     m.add_argument("--title", required=True)
     m.add_argument("--description", default="")
+    m.add_argument("--base", action="append", default=[], metavar="[REPO=]BRANCH", help="branch to start from instead of the configured base; REPO= picks one repo")
     m.add_argument("--autonomy", choices=[a.value for a in Autonomy], default=Autonomy.GATED.value)
     m.add_argument("--pack", default="auto", help="auto (rule, or Jev when on), solo, codec-standard or a pack path")
     m.add_argument("--model", help="force one model for every role (a local override; beats Jev's pick)")

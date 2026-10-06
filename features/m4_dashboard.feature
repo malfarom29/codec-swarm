@@ -158,3 +158,23 @@ Feature: M4 dashboard
     When I merge it locally into develop from the page
     Then the local PR says it was merged into develop
     And the mission page of CODEC-1720 shows the lane merged into develop
+
+  Scenario: New mission starts each lane from the configured base unless I pick another
+    Given I am signed in
+    And a local origin repo "billing" with no swarm config
+    And origin "billing" also has a branch release/2026.10
+    And I added that repo on the Repos page
+    And I saved billing's local config with stack python and base develop
+    When I list the bases for billing on the New mission form
+    Then billing's base defaults to develop and offers release/2026.10
+    When I start mission CODEC-1730 on billing from release/2026.10
+    Then mission CODEC-1730 starts billing from release/2026.10
+
+  Scenario: A base that origin doesn't have is refused before the mission starts
+    Given I am signed in
+    And a local origin repo "billing" with no swarm config
+    And I added that repo on the Repos page
+    And I saved billing's local config with stack python and base develop
+    When I start mission CODEC-1731 on billing from no-such-branch
+    Then the form says "billing has no branch 'no-such-branch' on origin"
+    And no mission CODEC-1731 was started

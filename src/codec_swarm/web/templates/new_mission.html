@@ -3,6 +3,7 @@
 {% block main %}
 <h1>New mission</h1>
 <p class="sub">One ticket, one or more repos. With more than one repo, the Architect orders the lanes.</p>
+{% if error %}<div class="panel note bad" data-error>{{ error }}</div>{% endif %}
 <form method="post" action="/missions" class="stack">
   <div class="row2">
     <label>Ticket <input name="ticket" id="nm-ticket" required placeholder="CODEC-1" value="{{ prefill.ticket }}"></label>
@@ -12,7 +13,9 @@
   </div>
   <label>Title <input name="title" id="nm-title" required value="{{ prefill.title }}"></label>
   <label>What needs to change, and why <textarea name="description" id="nm-desc" rows="6" placeholder="Acceptance criteria, one per line">{{ prefill.description }}</textarea></label>
-  <label>Repos (one URL per line) <textarea name="repo_urls" id="nm-repos" rows="3" required>{{ prefill.repo_urls }}</textarea></label>
+  <label>Repos (one URL per line) <textarea name="repo_urls" id="nm-repos" rows="3" required
+      hx-get="/partials/bases" hx-trigger="input changed delay:600ms" hx-target="#nm-bases" hx-swap="innerHTML" hx-include="this">{{ prefill.repo_urls }}</textarea></label>
+  <div id="nm-bases">{% include "_bases.html" %}</div>
   <div class="row2">
     <label>Pack
       <select name="pack" id="nm-pack"><option value="auto">Auto (rule, or Jev)</option><option value="codec-standard">Codec standard</option><option value="solo">Solo</option></select>

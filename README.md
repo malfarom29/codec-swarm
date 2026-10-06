@@ -4,8 +4,6 @@
 
 It adapts [Uncle Bob's SwarmForge](https://github.com/unclebob/swarm-forge) (roles, durable handoffs, worktrees). [LangGraph](https://langchain-ai.github.io/langgraph/) drives the flow, the [Claude Agent SDK](https://docs.claude.com/en/docs/agent-sdk/overview) runs the agents, and Jev (optional, via `typesafe-sdk`) routes models, scores commands and judges when a lane is done.
 
-Plan and design notes: [codec-swarm: Architecture & Plan](https://claude.ai/code/artifact/5280a148-35fd-48f5-b40c-07f3ec2c00f1).
-
 ## How a mission works
 
 ```
@@ -51,7 +49,7 @@ uv run codec-swarm up           # dashboard on http://127.0.0.1:8765
 ### Your first mission
 
 1. **Repos.** Paste the repo's URL and click Clone. If the repo has no `.swarm/config.yaml`, write a local config (at least `stack:`) on its page. It stays on your machine; see [Repo config](#repo-config).
-2. **New mission.** Enter a ticket key, title, what needs to change (acceptance criteria, one per line) and one or more repo URLs, then choose an autonomy mode:
+2. **New mission.** Enter a ticket key, title, what needs to change (acceptance criteria, one per line) and one or more repo URLs. Each repo then gets a field for the branch its lane starts from; it defaults to the configured `branch_flow.base`, and you can pick any of origin's branches. Then choose an autonomy mode:
    - **Gated** (default): stops at the spec and PR gates.
    - **Auto:** stops only when the judge isn't sure.
    - **Manual:** stops after every step.
@@ -79,7 +77,7 @@ uv run codec-swarm mission --ticket CODEC-700 --title "Add sum_amounts" \
 uv run codec-swarm report                           # cost, time and verdicts per mission
 ```
 
-The CLI asks at each gate. `--yes` answers gates for you, but never approves a lane with failed checks.
+Add `--base release/1.2` to start every lane from another branch, or `--base api=release/1.2` for one repo. The CLI asks at each gate. `--yes` answers gates for you, but never approves a lane with failed checks.
 
 ## Repo config
 

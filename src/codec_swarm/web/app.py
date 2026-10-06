@@ -29,6 +29,7 @@ from codec_swarm.plugins.jev import MODEL as JEV_MODEL
 from codec_swarm.plugins.jira import JiraError
 from codec_swarm.plugins.registry import jev_available
 from codec_swarm.service import MissionRequest, MissionService
+from codec_swarm.workspace.repos import check_name, repo_name
 from codec_swarm.store.settings import Orchestration, RoleOverride
 from codec_swarm.store.events import Event
 from codec_swarm.store.views import MissionView, mission_view
@@ -260,7 +261,26 @@ def create_app(service: MissionService, token: str) -> FastAPI:
 
     @app.get("/missions/new", response_class=HTMLResponse)
     async def new_mission(request: Request, ticket: str = "", title: str = "", description: str = "", repo_urls: str = ""):
-        return render(request, "new_mission.html", prefill={"ticket": ticket, "title": title, "description": description, "repo_urls": repo_urls})
+        prefill = {"ticket": ticket, "title": title, "description": description, "repo_urls": repo_urls}
+        return render(request, "new_mission.html", prefill=prefill, rows=base_rows(repo_urls), error="")
+
+    def base_rows(repo_urls: str, chosen: dict[str, str] | None = None) -> list[dict[str, Any]]:
+        rows = []
+        for url in dict.fromkeys(u.strip() for u in repo_urls.splitlines() if u.strip()):
+            try:
+                name = check_name(repo_name(url))
+            except ValueError:
+                continue
+            configured = service.repos.configured_base(name)
+            rows.append({
+                "name": name, "configured": configured, "branches": service.repos.branches(name),
+                "value": (chosen or {}).get(name) or configured or "",
+            })
+        return rows
+
+    @app.get("/partials/bases", response_class=HTMLResponse)
+    async def bases_partial(request: Request, repo_urls: str = ""):
+        return render(request, "_bases.html", rows=base_rows(repo_urls))
 
     @app.get("/missions/{ticket}", response_class=HTMLResponse)
     async def mission(request: Request, ticket: str):
@@ -336,6 +356,7 @@ def create_app(service: MissionService, token: str) -> FastAPI:
 
     @app.post("/missions")
     async def start_mission(
+        request_: Request,
         background: BackgroundTasks,
         ticket: str = Form(...),
         title: str = Form(...),
@@ -346,10 +367,20 @@ def create_app(service: MissionService, token: str) -> FastAPI:
         model: str = Form(""),
         jev: str = Form(""),
     ):
+        form = await request_.form()
+        chosen = {k.removeprefix("base:"): str(v).strip() for k, v in form.items() if k.startswith("base:") and str(v).strip()}
+        rows = base_rows(repo_urls, chosen)
+        unknown = [f"{r['name']} has no branch {r['value']!r} on origin" for r in rows if r["branches"] and r["value"] and r["value"] not in r["branches"]]
+        if unknown:
+            prefill = {"ticket": ticket, "title": title, "description": description, "repo_urls": repo_urls}
+            response = render(request_, "new_mission.html", prefill=prefill, rows=rows, error="; ".join(unknown))
+            response.status_code = 400
+            return response
         request = MissionRequest(
             ticket=ticket.strip(), title=title.strip(), description=description.strip(),
             repo_urls=tuple(u.strip() for u in repo_urls.splitlines() if u.strip()),
             autonomy=Autonomy(autonomy), pack=pack, model=model.strip() or None, no_jev=not jev,
+            bases={r["name"]: r["value"] for r in rows if r["value"] and r["value"] != r["configured"]},
         )
         background.add_task(in_background, request.ticket, lambda: service.start(request))
         return RedirectResponse(f"/missions/{request.ticket}", status_code=303)

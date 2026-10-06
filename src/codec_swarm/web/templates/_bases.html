@@ -1,0 +1,12 @@
+{% if rows %}
+<fieldset class="bases" data-bases>
+  <legend>Start each lane from</legend>
+  {% for r in rows %}
+  <label class="baserow" data-base="{{ r.name }}"><span class="mono">{{ r.name }}</span>
+    <input name="base:{{ r.name }}" list="branches-{{ r.name }}" value="{{ r.value }}" placeholder="{{ r.configured or 'the configured base' }}" autocomplete="off" aria-label="Base branch for {{ r.name }}">
+    <datalist id="branches-{{ r.name }}">{% for b in r.branches %}<option value="{{ b }}">{% endfor %}</datalist>
+    <span class="muted">{% if r.configured %}configured: {{ r.configured }}{% elif not r.branches %}not cloned yet: leave empty for its configured base{% else %}no config yet{% endif %}</span>
+  </label>
+  {% endfor %}
+</fieldset>
+{% endif %}

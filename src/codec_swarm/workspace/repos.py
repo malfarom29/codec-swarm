@@ -98,6 +98,21 @@ class RepoCatalog:
         self._workspace.clone(url.strip(), name)
         return name
 
+    def branches(self, name: str) -> list[str]:
+        """origin's branches as of the last fetch; empty before the repo is cloned."""
+        clone = self._clone(name)
+        if not (clone / ".git").exists():
+            return []
+        out = subprocess.run(["git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"], cwd=clone, capture_output=True, text=True).stdout
+        return [b.removeprefix("origin/") for b in out.split() if b not in ("origin", "origin/HEAD")]
+
+    def configured_base(self, name: str) -> str | None:
+        clone = self._clone(name)
+        try:
+            return load_repo_config(clone, self._pack, local_dir=self.local_dir).branch_flow.base
+        except Exception:  # no config yet: the stack default is shown as a hint instead
+            return None
+
     def stacks(self) -> list[str]:
         return self._pack.stacks()
 

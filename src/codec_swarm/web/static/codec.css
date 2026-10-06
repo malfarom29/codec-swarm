@@ -174,3 +174,6 @@ form.stack textarea { width: 100%; }
 .diff { background: #060a08; border-radius: 6px; padding: 10px 12px; font: 12px/1.5 var(--mono); overflow-x: auto; max-height: 70vh; overflow-y: auto; }
 .diff .add { color: var(--green); } .diff .del { color: var(--red); } .diff .hunk { color: var(--freq); } .diff .file { color: var(--fg); font-weight: 700; }
 @media (max-width: 760px) { .prcols { grid-template-columns: 1fr; } }
+.bases { display: grid; gap: 8px; }
+.baserow { display: grid; grid-template-columns: minmax(140px, 220px) minmax(160px, 260px) 1fr; gap: 10px; align-items: center; color: var(--fg); }
+@media (max-width: 760px) { .baserow { grid-template-columns: 1fr; } }

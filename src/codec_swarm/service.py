@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from codec_swarm.domain import Autonomy, Mission, choose_pack_rule
 from codec_swarm.graph import APPROVE, MissionRunner
 from codec_swarm.graph.coordinator import MissionCoordinator, MissionResult
-from codec_swarm.harness import LocalOverrides, load_pack, load_repo_config, resolve_session
+from codec_swarm.harness import BranchFlow, LocalOverrides, load_pack, load_repo_config, resolve_session
 from codec_swarm.plugins.claude_code import ClaudeCodeBackend
 from codec_swarm.plugins.gate import PerRepoGate
 from codec_swarm.plugins.jev import JevClient, LaneUnderJudgement
@@ -50,6 +50,7 @@ class MissionRequest(BaseModel, frozen=True):
     pack: str = "auto"  # auto (rule, or Jev when on) | solo | codec-standard | a pack path
     model: str | None = None  # a local override for every role
     no_jev: bool = False
+    bases: dict[str, str] = {}  # repo name -> branch the lane starts from, replacing its branch_flow.base
 
 
 @dataclass
@@ -102,8 +103,9 @@ class MissionService:
                     choice = choose_pack_rule(bool(mission.description.strip()), len(names), sensitive)
                 pack_name = choice.next
         pack = load_pack(pack_name)
+        flows = {name: self._flow(name, configs[name].branch_flow, request.bases.get(name)) for _, name in repos}
         lanes = {
-            (request.ticket, name): self._workspace.prepare_lane(url, name, request.ticket, request.title, configs[name].branch_flow)
+            (request.ticket, name): self._workspace.prepare_lane(url, name, request.ticket, request.title, flows[name])
             for url, name in repos
         }
         judged = {
@@ -137,6 +139,15 @@ class MissionService:
         runtime = MissionRuntime(request, mission, pack_name, plugins.jev, coordinator, jev)
         self._runtimes[request.ticket] = runtime
         return runtime
+
+    def _flow(self, name: str, flow: BranchFlow, base: str | None) -> BranchFlow:
+        """The repo's branch flow, starting from the base I picked for this mission if I picked one."""
+        if not base or base == flow.base:
+            return flow
+        branches = self.repos.branches(name)
+        if base not in branches:
+            raise ValueError(f"{name} has no branch {base!r} on origin")
+        return flow.model_copy(update={"base": base})
 
     def local_overrides(self, pack: str, role: str, forced_model: str | None = None) -> LocalOverrides:
         """The Harness page's tweaks for one role, plus a model forced for the whole mission."""
