@@ -2,7 +2,7 @@
 
 **codec-swarm** is a local, single-user orchestrator that takes a ticket to a reviewed change by running a swarm of Claude Code agents over your repos. Each agent plays one role: it writes the spec, builds with tests first, reviews, hardens or checks the work. They pass the work along through structured handoffs, each lane works in its own git worktree, and nothing reaches GitHub until you say so.
 
-It adapts [Uncle Bob's SwarmForge](https://github.com/unclebob/swarm-forge) (roles, durable handoffs, worktrees). [LangGraph](https://langchain-ai.github.io/langgraph/) drives the flow, the [Claude Agent SDK](https://docs.claude.com/en/docs/agent-sdk/overview) runs the agents, and Jev (optional, via `typesafe-sdk`) routes models, scores commands and judges when a lane is done.
+It adapts [Agent Swarm Collaboration and Decision Patterns](https://www.ibm.com/think/topics/agent-swarm) (roles, durable handoffs, worktrees). [LangGraph](https://langchain-ai.github.io/langgraph/) drives the flow, the [Claude Agent SDK](https://docs.claude.com/en/docs/agent-sdk/overview) runs the agents, and Jev (optional, via `typesafe-sdk`) routes models, scores commands and judges when a lane is done.
 
 ## How a mission works
 
