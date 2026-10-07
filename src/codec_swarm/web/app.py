@@ -116,13 +116,23 @@ def _terminal_line(e: Event) -> str | None:
     return None
 
 
+def qa_note(answers: list[tuple[str, str, str]], extra: str) -> str:
+    """My answers to an agent's questions, as instructions it can act on."""
+    lines = ["Answers from the human to the questions asked:", ""]
+    for n, (role, question, answer) in enumerate(answers, 1):
+        lines += [f"{n}. ({role}) {question}", f"   Answer: {answer or 'no answer: decide yourself and state the assumption in your handoff'}", ""]
+    if extra.strip():
+        lines += [extra.strip()]
+    return "\n".join(lines).strip()
+
+
 def notification(e: Event) -> dict[str, str] | None:
     """What deserves a sound: anything waiting on me, and a lane whose PR is ready."""
     lane = e.payload.get("lane") or ""
     where = f"{e.mission}{' · ' + lane if lane else ''}"
     if e.kind == "gate.opened":
         kind = e.payload.get("kind", "")
-        what = {"spec": "the spec is ready for your OK", "pr": "the local PR is ready for review", "review": "the judge wants your review", "handoff": "a step needs you"}.get(kind, f"{kind} gate")
+        what = {"questions": f"{e.payload.get('after') or 'an agent'} has questions for you", "spec": "the spec is ready for your OK", "pr": "the local PR is ready for review", "review": "the judge wants your review", "handoff": "a step needs you"}.get(kind, f"{kind} gate")
         return {"kind": "input", "title": where, "body": what, "url": f"/missions/{e.mission}/prs/{lane}" if kind in ("pr", "review") and lane else "/inbox"}
     if e.kind in ("mission.blocked", "mission.error", "lane.failed"):
         return {"kind": "input", "title": where, "body": "stopped: " + str(e.payload.get("reason") or e.payload.get("error") or "needs a look")[:140], "url": f"/missions/{e.mission}"}
@@ -187,6 +197,7 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
         return Markup(html)
 
     templates.env.filters["markdown"] = markdown
+    templates.env.globals["spec_overview"] = service.spec_overview
 
     @app.middleware("http")
     async def require_token(request: Request, call_next: Callable[[Request], Awaitable[Any]]):
@@ -656,9 +667,28 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
 
     @app.post("/missions/{ticket}/gates")
     async def answer_gate(
-        background: BackgroundTasks, ticket: str, lane: str = Form(""), answer: str = Form(...), back: str = Form(""), note: str = Form(""),
+        request: Request, background: BackgroundTasks, ticket: str, lane: str = Form(""), answer: str = Form(...),
+        back: str = Form(""), note: str = Form(""), kind: str = Form(""), after: str = Form(""),
     ):
+        form = await request.form()
+        answers = [
+            (str(form.get(f"r{i}") or ""), str(form.get(f"q{i}") or ""), str(form.get(f"a{i}") or "").strip())
+            for i in range(200) if form.get(f"q{i}") is not None
+        ]
         note = note.strip() if answer == "send_back" else ""
+        if answers and any(a for _, _, a in answers):
+            planning, lane_roles, repos = service.roles(ticket)
+            # A send-back goes to the role that asked (questions gate) or to the first planning role (spec gate).
+            recipient = (after if kind == "questions" else (planning[0] if planning else "")) if answer == "send_back" else ""
+            if answer == "send_back":
+                note = qa_note(answers, note)
+            for role in dict.fromkeys(r for r, _, _ in answers if r and r != recipient):
+                own = [x for x in answers if x[0] == role]
+                if any(a for _, _, a in own):
+                    service.send_message(ticket, "", role, qa_note(own, ""))  # e.g. the architect's answers, at its next step
+            if answer == "approve" and kind == "spec" and lane_roles:
+                for repo in repos:  # approving with answers: the coder of each lane gets them with its first step
+                    service.send_message(ticket, repo, lane_roles[0], qa_note(answers, "Answers I gave while approving the spec:"))
         dispatch(background, ticket, "answer", lane=lane, answer=answer, note=note)
         return RedirectResponse(back or f"/missions/{ticket}", status_code=303)
 

@@ -23,6 +23,18 @@ SEND_BACK = "send_back"
 MAX_COMMIT_RETRIES = 2
 
 
+def _open_questions(state: dict[str, Any]) -> list[dict[str, str]]:
+    """The questions in each role's latest handoff since I last answered (a human handoff), oldest role first."""
+    latest: dict[str, list[str]] = {}
+    for handoff in reversed(state.get("handoffs", [])):
+        role = handoff.get("from_role")
+        if role == "human":
+            break
+        if role not in latest and role not in ("orchestrator", "judge"):
+            latest[role] = list(handoff.get("questions") or [])
+    return [{"role": role, "question": q} for role in reversed(list(latest)) for q in latest[role]]
+
+
 class MissionState(TypedDict, total=False):
     mission: dict[str, Any]
     trail: Annotated[list[str], operator.add]  # every node that did work, in order
@@ -157,7 +169,10 @@ def build_graph(
             if kind is GateKind.SPEC and mission.autonomy is Autonomy.AUTO:
                 return {"next": on_approve(state)}
             trail = state.get("trail", [])
-            reply = interrupt({"kind": kind.value, "after": trail[-1] if trail else None, "verdict": state.get("verdict")})
+            ask = {"kind": kind.value, "after": trail[-1] if trail else None, "verdict": state.get("verdict")}
+            if kind in (GateKind.SPEC, GateKind.QUESTIONS):
+                ask["questions"] = _open_questions(state)
+            reply = interrupt(ask)
             answer, instructions = (reply.get("answer"), (reply.get("note") or "").strip()) if isinstance(reply, dict) else (reply, "")
             if answer == APPROVE:
                 return {"next": on_approve(state)}
@@ -185,14 +200,22 @@ def build_graph(
     gates = {"handoff_gate": gate_node(GateKind.HANDOFF, lambda s: s["next"], lambda s: s["trail"][-1])}
     if with_planning:
         gates["spec_gate"] = gate_node(GateKind.SPEC, lambda s: after_spec, lambda s: pack.planning_roles[0])
+        # Continue without answering goes on to the next role; answers go back to the role that asked.
+        gates["questions_gate"] = gate_node(GateKind.QUESTIONS, lambda s: s["next"], lambda s: s["trail"][-1])
     if with_lane:
         gates["review_gate"] = gate_node(GateKind.REVIEW, lambda s: "done", lambda s: pack.rework_role)
         gates["pr_gate"] = gate_node(GateKind.PR, lambda s: "done", lambda s: pack.rework_role)
 
     def after_role(state: MissionState) -> str:
-        incomplete = bool(state.get("handoffs")) and state["handoffs"][-1].get("incomplete")
+        last = state["handoffs"][-1] if state.get("handoffs") else {}
         # A step without a real handoff always waits for a human, whatever the autonomy.
-        return "handoff_gate" if incomplete or _mission(state).autonomy is Autonomy.MANUAL else state["next"]
+        if last.get("incomplete"):
+            return "handoff_gate"
+        # A planning role that asked me something waits for my answers, unless the spec gate (which shows them) is next.
+        if (last.get("from_role") in pack.planning_roles and last.get("questions") and state["next"] != "spec_gate"
+                and _mission(state).autonomy is not Autonomy.AUTO):
+            return "questions_gate"
+        return "handoff_gate" if _mission(state).autonomy is Autonomy.MANUAL else state["next"]
 
     def follow_next(state: MissionState) -> str:
         return state["next"]

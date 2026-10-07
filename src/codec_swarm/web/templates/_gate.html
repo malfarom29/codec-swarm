@@ -1,6 +1,6 @@
 <div class="panel gate" data-gate="{{ g.ticket }}:{{ g.lane }}:{{ g.kind }}">
   <div class="what">
-    <div><span class="id">{{ g.ticket }}</span> · <strong>{{ g.kind }} gate</strong>{% if g.lane %} · lane <span class="mono">{{ g.lane }}</span>{% endif %}{% if g.after %} · after {{ g.after }}{% endif %}</div>
+    <div><span class="id">{{ g.ticket }}</span> · <strong>{{ "questions from the " ~ g.after if g.kind == "questions" else g.kind ~ " gate" }}</strong>{% if g.lane %} · lane <span class="mono">{{ g.lane }}</span>{% endif %}{% if g.after and g.kind != "questions" %} · after {{ g.after }}{% endif %}</div>
     {% if titles is defined and titles.get(g.ticket) %}<div class="sub" style="margin:2px 0 0">{{ titles[g.ticket] }}</div>{% endif %}
     {% if g.kind in ("pr", "review") and g.lane %}<div style="margin-top:4px"><a href="/missions/{{ g.ticket }}/prs/{{ g.lane }}">Review the local PR →</a> push it to GitHub or merge it locally from there</div>{% endif %}
     {% if g.verdict %}
@@ -8,12 +8,36 @@
     <div class="verdict">judge {{ g.verdict.get("source") }} · {% if g.verdict.get("score") is not none %}score {{ "%.2f" | format(g.verdict.score) }}{% else %}no score{% endif %} · {{ g.verdict.get("band") }} band{% if failed %} · <span style="color:var(--red)">failed: {{ failed | join(", ") }}</span>{% endif %}
 {{ g.verdict.get("rationale", "") }}</div>
     {% endif %}
+    {% if g.kind == "spec" %}{% for repo, spec in spec_overview(g.ticket).items() %}{% include "_spec_overview.html" %}{% endfor %}{% endif %}
   </div>
-  <form method="post" action="/missions/{{ g.ticket }}/gates" class="actions">
-    <input type="hidden" name="lane" value="{{ g.lane }}">
-    <input type="hidden" name="back" value="{{ back }}">
+  <form method="post" action="/missions/{{ g.ticket }}/gates" class="{{ 'qa' if g.questions else 'actions' }}">
+    <input type="hidden" name="lane" value="{{ g.lane }}"><input type="hidden" name="back" value="{{ back }}">
+    <input type="hidden" name="kind" value="{{ g.kind }}"><input type="hidden" name="after" value="{{ g.after or '' }}">
+    {% if g.questions %}
+    <ol class="questions" data-questions>
+      {% for q in g.questions %}{% set i = loop.index0 %}
+      <li>
+        <div class="q"><span class="pill dim">{{ q.role }}</span> {{ q.question }}</div>
+        <input type="hidden" name="q{{ i }}" value="{{ q.question }}"><input type="hidden" name="r{{ i }}" value="{{ q.role }}">
+        <textarea name="a{{ i }}" id="ans-{{ g.ticket }}-{{ g.lane or 'planning' }}-{{ g.kind }}-{{ i }}" hx-preserve="true" rows="2"
+          placeholder="Your answer: leave it empty and the agent decides, saying what it assumed" aria-label="Answer to question {{ loop.index }}"></textarea>
+      </li>
+      {% endfor %}
+    </ol>
+    <textarea name="note" id="note-{{ g.ticket }}-{{ g.lane or 'planning' }}-{{ g.kind }}" hx-preserve="true" rows="2" placeholder="Anything else for the agent (optional)"></textarea>
+    <div class="actions">
+      {% if g.kind == "questions" %}
+      <button class="primary" name="answer" value="send_back">Send answers to the {{ g.after }}</button>
+      <button name="answer" value="approve" title="Go on to the next role; the agent keeps its assumptions">Continue without answering</button>
+      {% else %}
+      <button class="primary" name="answer" value="approve" title="Answers you typed reach each lane's coder with its first step">Approve{{ " the spec" if g.kind == "spec" }}</button>
+      <button name="answer" value="send_back">Send back with these answers</button>
+      {% endif %}
+    </div>
+    {% else %}
     <button class="primary" name="answer" value="approve">Approve</button>
     <button name="answer" value="send_back">Send back</button>
     <textarea name="note" rows="2" placeholder="Instructions for the send-back (optional)" aria-label="Instructions if you send it back"></textarea>
+    {% endif %}
   </form>
 </div>

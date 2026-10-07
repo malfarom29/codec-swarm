@@ -37,7 +37,11 @@ EXAMPLE_TICKETS = [
 
 
 def adf_text(node: Any) -> str:
-    """Plain text from Atlassian Document Format, enough for a ticket description."""
+    """Plain text from Atlassian Document Format, enough for a ticket description.
+
+    Every block ends its line, and list, checklist (taskItem) and decision items become "- " lines, so a ticket's
+    acceptance criteria stay one per line instead of running together.
+    """
     if node is None:
         return ""
     if isinstance(node, str):
@@ -49,8 +53,18 @@ def adf_text(node: Any) -> str:
         return node.get("text", "")
     if kind == "hardBreak":
         return "\n"
+    if kind in ("mention", "emoji", "inlineCard", "status", "date"):
+        attrs = node.get("attrs") or {}
+        return str(attrs.get("text") or attrs.get("shortName") or attrs.get("url") or "")
     inner = adf_text(node.get("content"))
-    return f"{inner}\n" if kind in ("paragraph", "heading", "listItem", "codeBlock", "blockquote") else inner
+    if kind in ("listItem", "taskItem", "decisionItem"):
+        return "- " + inner.strip().replace("\n", " ") + "\n"
+    if kind == "tableRow":
+        cells = [adf_text(c).strip().replace("\n", " ") for c in node.get("content") or []]
+        return " | ".join(cells) + "\n"
+    if kind in ("paragraph", "heading", "codeBlock", "blockquote", "panel", "bulletList", "orderedList", "taskList", "decisionList", "table"):
+        return inner if inner.endswith("\n") else inner + "\n"
+    return inner
 
 
 class JiraError(RuntimeError):

@@ -11,8 +11,10 @@ from typing import Any
 
 import anyio
 
-from codec_swarm.domain import Handoff, Mission, Verdict
+from codec_swarm.domain import Handoff, Mission, ScenarioResult, Verdict
+from codec_swarm.domain.models import CriterionResult
 from codec_swarm.harness.config import Check
+from codec_swarm.harness.spec import spec_scenarios, ticket_criteria
 
 CHECK_TIMEOUT_S = 600
 TAIL_LINES = 15
@@ -70,4 +72,12 @@ class ChecksOnlyJudge:
                 failed.append(check.id)
         if not checks:
             notes.append("no checks configured")
-        return Verdict(score=None, source="checks-only", rationale="\n".join(notes), failed_checks=tuple(failed))
+        # No scores without Jev, but the Definition of Done still lists the spec and which ticket criteria it covers.
+        scenarios = spec_scenarios(sorted((Path(worktree) / ".swarm" / "spec").glob("*.feature")))
+        criteria = ticket_criteria(mission.description)
+        listed = tuple(ScenarioResult(name=s.name, criteria=s.criteria) for s in scenarios)
+        covered = tuple(
+            CriterionResult(index=i, text=text, covered_by=tuple(s.name for s in scenarios if i in s.criteria))
+            for i, text in enumerate(criteria, 1)
+        )
+        return Verdict(score=None, source="checks-only", rationale="\n".join(notes), failed_checks=tuple(failed), scenarios=listed, criteria=covered)

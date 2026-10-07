@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from codec_swarm.domain import Mission
 from codec_swarm.harness.config import OUTPUT_FILTERS, READ_ONLY_COMMANDS, RepoConfig
 from codec_swarm.harness.packs import PackDefinition
+from codec_swarm.harness.spec import ticket_criteria
 
 LAYER_SEPARATOR = "\n\n---\n\n"
 ENV_REF = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -86,10 +87,24 @@ def commit_section(repo: RepoConfig) -> str:
     return "\n".join(lines)
 
 
-def mission_layer(mission: Mission, scenarios: str | None = None) -> str:
+def mission_layer(mission: Mission, scenarios: str | None = None, language: str | None = None) -> str:
     lines = ["# Layer 5 · Mission", f"Ticket {mission.ticket} on {mission.repo}: {mission.title or 'untitled'}."]
     if mission.description:
         lines += ["", mission.description.strip()]
+    criteria = ticket_criteria(mission.description)
+    if criteria:
+        lines += [
+            "",
+            "Acceptance criteria from the ticket. Every one must be covered by at least one scenario: tag each scenario",
+            "with the criteria it covers (@AC-1 @AC-3; one scenario may cover several). If a criterion can't be written as",
+            "a scenario, say why in your handoff questions.",
+            "",
+            *(f"- AC-{i}: {text}" for i, text in enumerate(criteria, 1)),
+        ]
+    if language:
+        lines += ["", f"Write the Gherkin in the {language!r} dialect: the first line of every .feature file is `# language: {language}`."]
+    else:
+        lines += ["", "Write the Gherkin in the ticket's language. If that isn't English, start every .feature file with `# language: <code>` (es, pt, fr…)."]
     if not mission.repo and mission.repos:
         lines += [
             "",
@@ -132,7 +147,7 @@ def resolve_session(
         domain,
         pack.layer(f"constitution/stacks/{repo.stack}.md"),
         pack.role_prompt(role),
-        mission_layer(mission, scenarios),
+        mission_layer(mission, scenarios, repo.language),
         commands_section(repo),
         commit_section(repo),
     ]

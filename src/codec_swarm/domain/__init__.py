@@ -11,7 +11,7 @@ from codec_swarm.domain.models import (
     LaneOrder,
     Mission,
     Pack,
-    ScenarioResult,
+    CriterionResult, ScenarioResult,
     UpstreamLane,
     Verdict,
 )

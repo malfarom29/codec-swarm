@@ -29,6 +29,7 @@ class GateView(BaseModel):
     kind: str
     after: str | None = None
     verdict: dict | None = None
+    questions: list[dict] = []  # [{"role", "question"}] a planning role is waiting on me to answer
     opened_at: str
 
 
@@ -122,7 +123,10 @@ def mission_view(events: list[Event]) -> MissionView:
             view.blocked = p.get("reason")
         elif e.kind == "gate.opened":
             if (lane := _lane_of(p, view, p.get("kind"))) is not None:
-                open_gates[lane] = GateView(ticket=view.ticket, lane=lane, kind=p["kind"], after=p.get("after"), verdict=p.get("verdict"), opened_at=e.created_at)
+                open_gates[lane] = GateView(
+                    ticket=view.ticket, lane=lane, kind=p["kind"], after=p.get("after"), verdict=p.get("verdict"),
+                    questions=list(p.get("questions") or []), opened_at=e.created_at,
+                )
         elif e.kind == "gate.resolved":
             lane = p.get("lane")
             if lane is None:  # older logs: close the oldest open gate of this kind

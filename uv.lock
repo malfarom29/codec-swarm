@@ -286,6 +286,7 @@ source = { editable = "." }
 dependencies = [
     { name = "claude-agent-sdk" },
     { name = "fastapi" },
+    { name = "gherkin-official" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "langgraph" },
@@ -311,6 +312,7 @@ dev = [
 requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.2.163" },
     { name = "fastapi", specifier = ">=0.142.2" },
+    { name = "gherkin-official", specifier = ">=42.0.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "langgraph", specifier = ">=1.2.12" },

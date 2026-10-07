@@ -10,6 +10,7 @@ requires-python = ">=3.13"
 dependencies = [
     "claude-agent-sdk>=0.2.163",
     "fastapi>=0.142.2",
+    "gherkin-official>=42.0.1",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
     "langgraph>=1.2.12",

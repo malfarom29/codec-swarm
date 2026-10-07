@@ -84,6 +84,7 @@ class RepoConfig(BaseModel, frozen=True, extra="forbid"):
     allowlist: tuple[str, ...] = ()
     roles: dict[str, RoleExtras] = Field(default_factory=dict)
     commit: CommitRules = CommitRules()
+    language: str | None = None  # Gherkin dialect for specs (es, pt, fr…); None: the ticket's language
     domain: str | None = None  # business rules; from repos.d/<repo>.domain.md, else the worktree's .swarm/domain.md
 
 

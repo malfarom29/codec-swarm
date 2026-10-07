@@ -101,28 +101,48 @@
   {% endfor %}
 </section>
 <section x-show="tab === 'dod'" x-cloak data-tab="dod">
+  {% set overview = spec_overview(m.ticket) %}
   {% for repo, lane in m.lanes.items() %}
   <div class="panel" data-dod="{{ repo }}">
     <h3 class="mono">{{ repo }}</h3>
     {% set v = lane.verdicts[-1] if lane.verdicts else none %}
-    {% if v %}
+    {% set spec = overview.get(repo) %}
     <div class="dod">
       <div>
         <div class="layer">Layer 1 · Hard checks</div>
-        {% for line in v.rationale.splitlines() if line and not line.startswith(("scenario ", "lane done")) %}<div class="check {{ 'bad' if 'FAIL' in line }}">{{ line }}</div>{% endfor %}
+        {% if v %}{% for line in v.rationale.splitlines() if line and not line.startswith(("scenario ", "lane done", "criterion ")) %}<div class="check {{ 'bad' if 'FAIL' in line }}">{{ line }}</div>{% endfor %}
+        {% else %}<div class="muted">Run when the lane reaches the judge.</div>{% endif %}
         <div class="layer">Layer 2 · Acceptance criteria</div>
-        {% for s in v.scenarios or [] %}
-        <div class="scen"><span>{{ s.name }}</span>{% if s.probability is not none %}<span class="bar"><i style="width: {{ (s.probability * 100) | round }}%" class="{{ 'ok' if s.probability >= 0.95 else ('warn' if s.probability >= 0.80 else 'bad') }}"></i></span><span class="mono">{{ "%.2f" | format(s.probability) }}</span>{% endif %}</div>
-        {% else %}<div class="muted">No per-scenario scores from this judge.</div>{% endfor %}
+        {% if v and v.criteria %}
+        {% for c in v.criteria %}
+        <div class="scen crit" data-ac="{{ c.index }}"><span><span class="mono">AC-{{ c.index }}</span> {{ c.text }}
+          <span class="muted">{% if c.covered_by %}· {{ c.covered_by | length }} scenario{{ "s" if c.covered_by | length != 1 }}{% else %}· no scenario covers it: judged on its own{% endif %}</span></span>
+          {% if c.probability is not none %}<span class="bar"><i style="width: {{ (c.probability * 100) | round }}%" class="{{ 'ok' if c.probability >= 0.95 else ('warn' if c.probability >= 0.80 else 'bad') }}"></i></span><span class="mono">{{ "%.2f" | format(c.probability) }}</span>{% else %}<span></span><span class="muted">not scored</span>{% endif %}</div>
+        {% endfor %}
+        {% elif spec and spec.criteria %}
+        {% for i, text, names in spec.criteria %}
+        <div class="scen crit" data-ac="{{ i }}"><span><span class="mono">AC-{{ i }}</span> {{ text }} <span class="muted">· {{ (names | length ~ " scenario" ~ ("s" if names | length != 1)) if names else "no scenario covers it yet" }}</span></span><span></span><span class="muted">not judged</span></div>
+        {% endfor %}
+        {% else %}<div class="muted">The ticket lists no acceptance criteria of its own; the scenarios below are the Definition of Done.</div>{% endif %}
+        <div class="layer">Scenarios</div>
+        {% if v and v.scenarios %}
+        {% for s in v.scenarios %}
+        <div class="scen"><span>{{ s.name }}{% for c in s.criteria or [] %} <span class="pill dim">AC-{{ c }}</span>{% endfor %}</span>{% if s.probability is not none %}<span class="bar"><i style="width: {{ (s.probability * 100) | round }}%" class="{{ 'ok' if s.probability >= 0.95 else ('warn' if s.probability >= 0.80 else 'bad') }}"></i></span><span class="mono">{{ "%.2f" | format(s.probability) }}</span>{% else %}<span></span><span class="muted">not scored</span>{% endif %}</div>
+        {% endfor %}
+        {% elif spec and spec.scenarios %}
+        {% for s in spec.scenarios %}<div class="scen"><span>{{ s.name }}{% for c in s.criteria %} <span class="pill dim">AC-{{ c }}</span>{% endfor %}</span><span></span><span class="muted">not judged</span></div>{% endfor %}
+        {% else %}<div class="muted">No spec yet.</div>{% endif %}
       </div>
       <div class="verdictbox" data-verdict>
         <div class="layer">Layer 3 · Verdict</div>
+        {% if v %}
         <div class="score">{% if v.score is not none %}{{ "%.2f" | format(v.score) }}{% else %}no score{% endif %}</div>
         <span class="pill {{ {'approve': '', 'review': 'amber', 'stop': 'red'}.get(v.band, 'dim') }}">{{ v.band }} band</span>
         <p class="muted">judge {{ v.source }} · {{ lane.verdicts | length }} run{{ "s" if lane.verdicts | length != 1 }} · next: {{ v.next }}</p>
+        <p class="muted">The score is the weakest scenario, or the weakest criterion no scenario covers.</p>
+        {% else %}<p class="empty">Not judged yet.</p>{% endif %}
       </div>
     </div>
-    {% else %}<p class="empty">Not judged yet.</p>{% endif %}
   </div>
   {% endfor %}
 </section>

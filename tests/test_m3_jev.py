@@ -34,6 +34,7 @@ class FakeJev:
         self.safe = 0.5
         self.done = 0.5
         self.scenarios: dict[str, float] = {}  # scenario name -> probability; others get 0.9
+        self.criteria: dict[str, float] = {}  # ticket criterion text -> probability; others get 0.9
         self.states: list = []
 
     async def __call__(self, state, questions):
@@ -52,9 +53,11 @@ class FakeJev:
                 answers[name] = {"type": "noul", "noul": self.safe}
             elif name == "done":
                 answers[name] = {"type": "noul", "noul": self.done}
+            elif "criterion" in question.instructions:  # criterion_i: a ticket criterion no scenario covers
+                answers[name] = {"type": "noul", "noul": self.criteria.get(question.instructions["criterion"], 0.9)}
             else:  # scenario_i
                 text = question.instructions["scenario"]
-                p = next((v for k, v in self.scenarios.items() if f"Scenario: {k}\n" in text + "\n"), 0.9)
+                p = next((v for k, v in self.scenarios.items() if f": {k}\n" in text + "\n"), 0.9)
                 answers[name] = {"type": "noul", "noul": p}
         return SystemOneResponse.model_validate({"model": "jev-1.13.0", "usage": {"input_tokens": 1, "output_tokens": 1}, "answers": answers})
 

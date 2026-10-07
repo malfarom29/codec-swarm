@@ -59,7 +59,8 @@ So pages stay fast while lanes build and test, and restarting the dashboard does
    - **Gated** (default): stops at the spec and PR gates.
    - **Auto:** stops only when the judge isn't sure.
    - **Manual:** stops after every step.
-3. **Inbox.** Approve the spec, or send it back. A send-back can carry instructions, which reach the role that picks the work up as part of its incoming handoff.
+3. **Questions and the spec.** If the Specifier has questions, the mission stops at a *questions* gate. Each question is listed with its own answer box. **Send answers** returns them to the Specifier; **Continue without answering** lets it keep its assumptions. At the spec gate, check which of the ticket's acceptance criteria the scenarios cover (`@AC-n` tags), then approve the spec or send it back. A send-back can carry instructions, which reach the role that picks the work up as part of its incoming handoff.
+   Acceptance criteria are read from the ticket's description, under a heading like *Acceptance criteria* or *Criterios de aceptación*. Specs can be in any Gherkin language (`# language: es`); set `language:` in the repo config to fix one. The judge scores each scenario, plus any criterion no scenario covers, and the lane is as done as the weakest of them. Both show on the **Definition of Done** tab, before and after judging.
 4. **Follow the work.** The board shows missions *by stage* or *by agent*. A mission's page has tabs:
    - **Activity**
    - **Agents:** each role's output, a box to message that role at its next step, and `claude --resume` to attach to its session

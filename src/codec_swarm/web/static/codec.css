@@ -200,3 +200,13 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .lanefixactions form { margin: 0; }
 .restartlane { display: flex; gap: 8px; align-items: flex-start; flex: 1 1 360px; }
 .restartlane textarea { flex: 1; min-width: 0; font-size: 12.5px; }
+form.qa { flex: 1 1 100%; display: grid; gap: 10px; }
+.questions { margin: 0; padding-left: 20px; display: grid; gap: 12px; }
+.questions .q { margin-bottom: 4px; line-height: 1.45; }
+.questions textarea, form.qa > textarea { width: 100%; font: 13px/1.5 var(--sans); }
+.specov { margin-top: 10px; }
+.criteria { list-style: none; padding: 0; margin: 4px 0 6px; display: grid; gap: 3px; font-size: 13px; }
+.criteria li.ok::before { content: "● "; color: var(--green); }
+.criteria li.gap::before { content: "○ "; color: var(--amber); }
+.criteria li.gap { color: var(--amber); }
+.scenlist { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }

@@ -15,6 +15,7 @@ class Autonomy(StrEnum):
 
 class GateKind(StrEnum):
     SPEC = "spec"
+    QUESTIONS = "questions"  # a planning role asked me something before the spec is final
     HANDOFF = "handoff"
     REVIEW = "review"
     PR = "pr"
@@ -107,6 +108,16 @@ class Decision(BaseModel, frozen=True):
 class ScenarioResult(BaseModel, frozen=True):
     name: str
     probability: float | None = None  # Jev's "is this scenario met?"; None for judges without a calibrated score
+    criteria: tuple[int, ...] = ()  # the ticket's acceptance criteria (1-based) this scenario is tagged with
+
+
+class CriterionResult(BaseModel, frozen=True):
+    """One acceptance criterion from the ticket: the scenarios that cover it, or its own score when none does."""
+
+    index: int  # 1-based, as in @AC-1
+    text: str
+    covered_by: tuple[str, ...] = ()
+    probability: float | None = None  # judged directly when no scenario covers it; else its weakest covering scenario
 
 
 class Verdict(BaseModel, frozen=True):
@@ -115,6 +126,7 @@ class Verdict(BaseModel, frozen=True):
     rationale: str = ""
     failed_checks: tuple[str, ...] = ()
     scenarios: tuple[ScenarioResult, ...] = ()
+    criteria: tuple[CriterionResult, ...] = ()
 
 
 class JudgeBands(BaseModel, frozen=True):

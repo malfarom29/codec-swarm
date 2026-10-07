@@ -32,7 +32,7 @@ class FakeMissionService(MissionService):
     async def build(self, request: MissionRequest, pack_name: str | None = None) -> MissionRuntime:
         names = tuple(repo_name(u) for u in request.repo_urls)
         mission = Mission(ticket=request.ticket, repo="", repos=names, title=request.title, description=request.description, autonomy=request.autonomy)
-        backend, judge = FakeBackend(), FakeJudge()
+        backend, judge = FakeBackend(**getattr(self, "backend_options", {})), FakeJudge()
         self.backend = backend
 
         def runner(part):
@@ -921,3 +921,63 @@ def resumed(web, ticket):
     assert "mission.interrupted" in [e.kind for e in events]
     view = mission_view(events)
     assert view.planning_gate is None and view.lanes["codec-swarm-sandbox"].gate.kind == "pr"  # the approval went through
+
+
+
+# --- questions while planning -------------------------------------------------------
+
+
+@given(parsers.parse('the specifier will ask "{first}" and "{second}"'))
+def specifier_asks(web, first, second):
+    web["service"].backend_options = {"questions_on": {"specifier": [first, second]}}
+    web["questions"] = [first, second]
+
+
+@then(parsers.parse("the inbox lists both questions of {ticket} with an answer box each"))
+def inbox_questions(web, ticket):
+    html = web["client"].get("/inbox").text
+    gate = html[html.index(f'data-gate="{ticket}::questions"') :]
+    for i, question in enumerate(web["questions"]):
+        assert question in gate and f'name="a{i}"' in gate
+    assert "Send answers to the specifier" in gate and "Continue without answering" in gate
+
+
+@when(parsers.parse('I answer the questions of {ticket} with "{first}" and nothing, and send them'))
+def answer_questions(web, ticket, first):
+    form = {"lane": "", "answer": "send_back", "kind": "questions", "after": "specifier", "back": "/inbox",
+            "q0": web["questions"][0], "r0": "specifier", "a0": first, "q1": web["questions"][1], "r1": "specifier", "a1": ""}
+    assert web["client"].post(f"/missions/{ticket}/gates", data=form, follow_redirects=False).status_code == 303
+
+
+@then(parsers.parse('the specifier\'s next step got the answer "{answer}" and was told to decide the other itself'))
+def specifier_got_answers(web, answer):
+    incoming = [h for role, h in web["service"].backend.requests if role == "specifier"][-1]
+    assert incoming.from_role == "human"
+    assert web["questions"][0] in incoming.summary and f"Answer: {answer}" in incoming.summary
+    assert "no answer: decide yourself and state the assumption" in incoming.summary
+
+
+@given(parsers.parse('mission {ticket} "{title}" on {repo} has the criteria "{first}" and "{second}" and a spec covering only the first'))
+def mission_with_criteria(web, ticket, title, repo, first, second):
+    description = f"Acceptance criteria\n- {first}\n- {second}\n"
+    request = MissionRequest(ticket=ticket, title=title, repo_urls=(repo,), description=description, no_jev=True)
+    anyio.run(web["service"].start, request)
+    spec = web["service"].root / "missions" / ticket / repo / "spec"
+    spec.mkdir(parents=True)
+    (spec / "fixes.feature").write_text(
+        "Feature: Invoice templates\n\n  @AC-1\n  Scenario: Merge duplicate templates\n    Then one template remains\n"
+    )
+
+
+@then("the Definition of Done shows AC-1 covered by a scenario and AC-2 covered by none")
+def dod_criteria(web):
+    dod = web["page"][web["page"].index('data-tab="dod"') :]
+    ac1 = re.search(r'data-ac="1">(.*?)</div>', dod, re.S).group(1)
+    ac2 = re.search(r'data-ac="2">(.*?)</div>', dod, re.S).group(1)
+    assert "1 scenario" in ac1 and "no scenario covers it yet" in ac2
+
+
+@then(parsers.parse('it lists the scenario "{name}" as not judged'))
+def dod_scenario(web, name):
+    dod = web["page"][web["page"].index('data-tab="dod"') :]
+    assert name in dod and "not judged" in dod and "AC-1</span>" in dod

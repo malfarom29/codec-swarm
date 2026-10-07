@@ -1,0 +1,12 @@
+<div class="specov" data-spec="{{ repo }}">
+  <div class="layer">Spec · {{ repo }} · {{ spec.scenarios | length }} scenario{{ "s" if spec.scenarios | length != 1 }}</div>
+  {% if spec.criteria %}
+  <ul class="criteria" data-criteria>
+    {% for i, text, names in spec.criteria %}
+    <li class="{{ 'ok' if names else 'gap' }}" data-ac="{{ i }}"><span class="mono">AC-{{ i }}</span> {{ text }}
+      <span class="muted">{% if names %}· {{ names | length }} scenario{{ "s" if names | length != 1 }}{% else %}· no scenario covers it{% if g is defined and g.kind == "spec" %}: send it back, or the judge scores it on its own{% endif %}{% endif %}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <details><summary>Scenarios</summary><ul class="scenlist">{% for s in spec.scenarios %}<li>{{ s.name }}{% for c in s.criteria %} <span class="pill dim">AC-{{ c }}</span>{% endfor %}</li>{% else %}<li class="empty">No scenarios found in the spec.</li>{% endfor %}</ul></details>
+</div>

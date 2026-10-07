@@ -298,3 +298,19 @@ Feature: M4 dashboard
     And a worker died while approving the spec of CODEC-1801
     When the worker runs what is queued
     Then CODEC-1801 was resumed from its checkpoint, with my approval applied
+
+  Scenario: Questions while planning get one answer box each, sent back together
+    Given I am signed in
+    And the specifier will ask "Is the real column template_id?" and "Do we keep the existing enum values?"
+    And mission CODEC-1810 "Merge invoice templates" on codec-swarm-sandbox is waiting at its questions gate
+    Then the inbox lists both questions of CODEC-1810 with an answer box each
+    When I answer the questions of CODEC-1810 with "Yes, it is template_id" and nothing, and send them
+    Then the specifier's next step got the answer "Yes, it is template_id" and was told to decide the other itself
+    And the inbox shows the spec gate of CODEC-1810
+
+  Scenario: The Definition of Done lists the ticket's criteria and the spec before judging
+    Given I am signed in
+    And mission CODEC-1820 "Merge invoice templates" on codec-swarm-sandbox has the criteria "Merge duplicate templates" and "Add a logo" and a spec covering only the first
+    When I open the mission page of CODEC-1820
+    Then the Definition of Done shows AC-1 covered by a scenario and AC-2 covered by none
+    And it lists the scenario "Merge duplicate templates" as not judged

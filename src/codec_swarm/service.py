@@ -23,6 +23,7 @@ from codec_swarm.graph.coordinator import MissionCoordinator, MissionResult, lan
 from codec_swarm.graph.runner import forget_threads
 from codec_swarm.harness import BranchFlow, LocalOverrides, load_pack, load_repo_config, resolve_session
 from codec_swarm.harness.config import CommitRules
+from codec_swarm.harness.spec import spec_scenarios, ticket_criteria
 from codec_swarm.plugins.claude_code import ClaudeCodeBackend
 from codec_swarm.plugins.checks import run_check
 from codec_swarm.plugins.gate import PerRepoGate
@@ -394,6 +395,33 @@ class MissionService:
         if self._open_gate(ticket, repo):
             await self.answer(ticket, repo, APPROVE)
         return result
+
+    def roles(self, ticket: str) -> tuple[list[str], list[str], list[str]]:
+        """(planning roles, lane roles, repos) of a mission, from the pack and request it last started with."""
+        stored = self.stored_request(ticket)
+        if stored is None:
+            return [], [], []
+        pack = load_pack(stored[1]).pack
+        return list(pack.planning_roles), list(pack.lane_roles), [repo_name(u) for u in stored[0].repo_urls]
+
+    def spec_overview(self, ticket: str) -> dict[str, dict[str, Any]]:
+        """Per repo: the spec's scenarios (any language) and which ticket criteria they cover, before or after judging."""
+        stored = self.stored_request(ticket)
+        if stored is None:
+            return {}
+        criteria = ticket_criteria(stored[0].description)
+        overview = {}
+        for url in stored[0].repo_urls:
+            repo = repo_name(url)
+            folder = self._workspace.record_dir(ticket, repo) / "spec"
+            if not folder.is_dir():
+                folder = self._workspace.worktrees / ticket / repo / ".swarm" / "spec"
+            scenarios = spec_scenarios(sorted(folder.glob("*.feature"))) if folder.is_dir() else []
+            overview[repo] = {
+                "scenarios": scenarios,
+                "criteria": [(i, text, [s.name for s in scenarios if i in s.criteria]) for i, text in enumerate(criteria, 1)],
+            }
+        return overview
 
     def waiting_at_gate(self, ticket: str, lane: str) -> bool:
         """The planning thread (lane "") or a lane is waiting at a gate, per the event log."""

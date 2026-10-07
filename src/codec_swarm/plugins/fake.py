@@ -20,11 +20,13 @@ class FakeBackend:
     incomplete_on: str | None = None  # role whose step ends without a structured handoff, even after the retry
     crash_in_repo: str | None = None  # limit crash_on to this repo's lane
     lane_order: tuple[LaneOrder, ...] = ()  # what the architect plans
+    questions_on: dict[str, list[str]] = field(default_factory=dict)  # role -> questions its first handoff asks
     calls: list[str] = field(default_factory=list)
     requests: list[tuple[str, Handoff | None]] = field(default_factory=list)  # (role, incoming handoff)
     missions: list[Mission] = field(default_factory=list)  # the mission each step saw
     messages: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)  # (role, chat messages delivered to it)
     _sent_back: set[str] = field(default_factory=set)
+    _asked: set[str] = field(default_factory=set)
 
     async def run_step(self, request: StepRequest) -> AsyncIterator[AgentEvent]:
         role = request.role
@@ -41,6 +43,9 @@ class FakeBackend:
         handoff = Handoff(from_role=role, summary=f"{role} {'sends back' if send_back else 'done'}", send_back=send_back)
         if role == "architect" and self.lane_order:
             handoff = handoff.model_copy(update={"lane_order": self.lane_order})
+        if role in self.questions_on and role not in self._asked:
+            self._asked.add(role)
+            handoff = handoff.model_copy(update={"questions": tuple(self.questions_on[role])})
         if role == self.incomplete_on:
             handoff = Handoff(from_role=role, summary=f"{role} ended without a structured handoff", incomplete=True)
         yield AgentEvent(kind="handoff", role=role, payload=handoff.model_dump())
