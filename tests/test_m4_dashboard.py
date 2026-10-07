@@ -981,3 +981,24 @@ def dod_criteria(web):
 def dod_scenario(web, name):
     dod = web["page"][web["page"].index('data-tab="dod"') :]
     assert name in dod and "not judged" in dod and "AC-1</span>" in dod
+
+
+@when(parsers.parse('I count full event-log reads while opening "{a}", "{b}", "{c}" and the mission page of {ticket}'))
+def count_full_reads(web, a, b, c, ticket, monkeypatch):
+    events = web["service"].events
+    original = events.list
+    web["full_reads"] = []
+
+    def counted(mission=None, since=0):
+        if mission is None and since == 0:
+            web["full_reads"].append(mission)
+        return original(mission, since)
+
+    monkeypatch.setattr(events, "list", counted)
+    for path in (a, b, c, f"/missions/{ticket}"):
+        assert web["client"].get(path).status_code == 200
+
+
+@then("none of them read the whole event log")
+def no_full_reads(web):
+    assert web["full_reads"] == []

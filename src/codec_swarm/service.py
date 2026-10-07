@@ -33,7 +33,7 @@ from codec_swarm.plugins.jira import EXAMPLE_TICKETS, JiraClient, Ticket
 from codec_swarm.plugins.registry import build_plugins, jev_available
 from codec_swarm.store import EventLog, GateCache, SessionStore
 from codec_swarm.store.chat import ChatStore
-from codec_swarm.store.views import mission_view
+from codec_swarm.store.views import MissionView, mission_view
 from codec_swarm.store.settings import JiraSettings, Settings
 from codec_swarm.workspace import Workspace, WorkspaceRecorder
 from codec_swarm.workspace.github import GitHubPublisher, LocalPR, merge_for_resolution, squash, squash_message, update_from_base
@@ -87,6 +87,7 @@ class MissionService:
         self.settings = Settings(self.db)
         self.chat = ChatStore(self.db)
         self.envs = RepoEnvs(self.root)
+        self._views: dict[str, tuple[int, MissionView]] = {}
         self.jira_transport: Any = None  # tests swap in an httpx.MockTransport
         load_secrets(self.root)
         self._workspace = Workspace(self.root)
@@ -195,9 +196,21 @@ class MissionService:
         local = self.settings.role_override(pack, role)
         return LocalOverrides(model=forced_model, default_model=local.model, extra_mcp=tuple(local.extra_mcp), extra_skills=tuple(local.extra_skills))
 
+    def missions_started(self) -> list[str]:
+        return list(dict.fromkeys(e.mission for e in self.events.of_kind("mission.started")))
+
+    def view(self, ticket: str) -> MissionView:
+        """The mission's view, rebuilt only when it has new events: pages ask for it many times a second."""
+        last = self.events.last_id(ticket)
+        cached = self._views.get(ticket)
+        if cached is None or cached[0] != last:
+            cached = (last, mission_view(self.events.list(ticket)))
+            self._views[ticket] = cached
+        return cached[1]
+
     def stored_request(self, ticket: str) -> tuple[MissionRequest, str] | None:
         """The request and pack a mission was last started with, from its latest mission.started event."""
-        for e in reversed(self.events.list(ticket)):
+        for e in reversed(self.events.of_kind("mission.started", ticket)):
             if e.kind == "mission.started" and "request" in e.payload:
                 return MissionRequest.model_validate(e.payload["request"]), e.payload["pack"]
         return None
@@ -425,13 +438,13 @@ class MissionService:
 
     def waiting_at_gate(self, ticket: str, lane: str) -> bool:
         """The planning thread (lane "") or a lane is waiting at a gate, per the event log."""
-        view = mission_view(self.events.list(ticket)) if self.events.list(ticket) else None
-        if view is None:
+        if not self.events.last_id(ticket):
             return False
+        view = self.view(ticket)
         return view.planning_gate is not None if not lane else bool(view.lanes.get(lane) and view.lanes[lane].gate)
 
     def _open_gate(self, ticket: str, repo: str) -> bool:
-        lane = mission_view(self.events.list(ticket)).lanes.get(repo)
+        lane = self.view(ticket).lanes.get(repo) if self.events.last_id(ticket) else None
         return bool(lane and lane.gate and lane.gate.kind in ("pr", "review"))
 
     # --- talking to agents ----------------------------------------------------
@@ -485,7 +498,7 @@ class MissionService:
 
     def intake(self) -> list[Ticket]:
         """Tickets I could start: synced from Jira once connected, examples until then; never ones already started."""
-        started = {e.mission for e in self.events.list() if e.kind == "mission.started"}
+        started = set(self.missions_started())
         tickets = [Ticket.model_validate(t) for t in self.settings.get("jira.tickets", [])] if self.jira_connected() else EXAMPLE_TICKETS
         return [t for t in tickets if t.key not in started]
 

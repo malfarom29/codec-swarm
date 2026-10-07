@@ -214,12 +214,11 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
         return PlainTextResponse("Open the URL `codec-swarm up` printed: it carries this launch's token.", status_code=401)
 
     def missions() -> list[MissionView]:
-        tickets = sorted({e.mission for e in service.events.list() if e.kind == "mission.started"}, reverse=True)
-        return [mission_view(service.events.list(t)) for t in tickets]
+        return [service.view(t) for t in sorted(set(service.missions_started()), reverse=True)]
 
     def kpis(ms: list[MissionView]) -> dict[str, Any]:
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        cost_today = sum(e.payload.get("cost_usd") or 0.0 for e in service.events.list() if e.kind == "cost" and e.created_at.startswith(today))
+        cost_today = service.events.cost_since(today)
         lanes = [lane for m in ms for lane in m.lanes.values() if lane.verdicts]
         approved = [lane for lane in lanes if lane.verdicts[-1].get("band") == "approve"]
         return {
@@ -247,8 +246,7 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
         return cards
 
     def last_id() -> int:
-        rows = service.events.list()
-        return rows[-1].id if rows else 0
+        return service.events.last_id()
 
     def render(request: Request, name: str, **context: Any) -> HTMLResponse:
         # A changed stylesheet or script is never served from cache.
@@ -296,15 +294,17 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
 
     @app.get("/inbox", response_class=HTMLResponse)
     async def inbox(request: Request):
-        return render(request, "inbox.html", gates=[g for m in missions() for g in m.open_gates], titles={m.ticket: m.title for m in missions()})
+        ms = missions()
+        return render(request, "inbox.html", gates=[g for m in ms for g in m.open_gates], titles={m.ticket: m.title for m in ms})
 
     @app.get("/partials/inbox", response_class=HTMLResponse)
     async def inbox_partial(request: Request):
-        return render(request, "_inbox.html", gates=[g for m in missions() for g in m.open_gates], titles={m.ticket: m.title for m in missions()})
+        ms = missions()
+        return render(request, "_inbox.html", gates=[g for m in ms for g in m.open_gates], titles={m.ticket: m.title for m in ms})
 
     def mission_context(ticket: str) -> dict[str, Any]:
         events = service.events.list(ticket)
-        view = mission_view(events)
+        view = service.view(ticket)
         activity = [(e.created_at[11:19], line) for e in events if (line := _line(e))][-60:][::-1]
         stage_index = {key: i for i, (key, _, _) in enumerate(s for s in STAGES if s[0] != "intake")}
         chat = service.chat.list(ticket)
@@ -379,15 +379,15 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
 
     @app.get("/requests", response_class=HTMLResponse)
     async def my_requests(request: Request):
-        rows = [(m, request_step(m), open_questions(service.events.list(m.ticket))) for m in missions()]
+        rows = [(m, request_step(m), open_questions(service.events.of_kind("handoff", m.ticket))) for m in missions()]
         return render(request, "requests.html", rows=rows, steps=REQUEST_STEPS)
 
     def repo_missions() -> dict[str, list[str]]:
         used: dict[str, list[str]] = {}
-        for e in service.events.list():
-            if e.kind == "mission.started":
-                for repo in e.payload.get("repos") or []:
-                    used.setdefault(repo, []).append(e.mission)
+        for e in service.events.of_kind("mission.started"):
+            for repo in e.payload.get("repos") or []:
+                if e.mission not in used.setdefault(repo, []):  # a restarted mission has several starts
+                    used[repo].append(e.mission)
         return used
 
     @app.get("/repos", response_class=HTMLResponse)

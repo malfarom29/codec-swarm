@@ -314,3 +314,9 @@ Feature: M4 dashboard
     When I open the mission page of CODEC-1820
     Then the Definition of Done shows AC-1 covered by a scenario and AC-2 covered by none
     And it lists the scenario "Merge duplicate templates" as not judged
+
+  Scenario: Pages never read the whole event log
+    Given I am signed in
+    And mission CODEC-1830 "Add from_cents" on codec-swarm-sandbox is waiting at its spec gate
+    When I count full event-log reads while opening "/", "/inbox", "/requests" and the mission page of CODEC-1830
+    Then none of them read the whole event log
