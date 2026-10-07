@@ -11,9 +11,9 @@ ticket ─► Specifier ─► Architect ─► [spec gate] ─► one lane per 
           Gherkin      lane order     you approve    coder ─► reviewer ─► hardener ─► QA ─► judge ─► local PR
 ```
 
-1. **Planning.** The Specifier writes Gherkin scenarios for each repo, and the Architect decides which repo's lane must come first. In the default *Gated* mode you approve the spec.
+1. **Planning.** The Specifier writes Gherkin scenarios for each repo, in the ticket's language, tagging each with the ticket's acceptance criteria it covers. The Architect decides which repo's lane must come first. If either one has questions, you answer them in a form with one box per question. In the default *Gated* mode you then approve the spec.
 2. **Lanes.** Each repo gets a worktree on a feature branch. Its roles work in turn and can send the work back. Agents never commit: the orchestrator commits each step with the agent's message. When another lane depends on this one, the upstream branch is pushed so the dependent lane can code against it.
-3. **Judge.** The repo's checks run (tests, lint, mutation, …). With Jev, every approved scenario is scored, and the lane's score is its weakest scenario. The score falls in one of three bands: *approve*, *review* (you look at it) or *stop* (it goes back to the coder).
+3. **Judge.** The repo's checks run (tests, lint, mutation, …). With Jev, every approved scenario is scored, and so is every ticket criterion that no scenario covers. The lane's score is the weakest of them. The score falls in one of three bands: *approve*, *review* (you look at it) or *stop* (it goes back to the coder).
 4. **Local PR.** A judged lane is squashed into one commit with one plain description of the change. You review the diff in the dashboard, pick a target branch, then choose **Push and open on GitHub** or **Merge locally**.
 
 Every step is recorded in an event log, and the graph is checkpointed after each step, so a crash or a restart picks up where it stopped.
@@ -114,6 +114,7 @@ A repo's settings are built from three layers, each overriding the one before:
 ```yaml
 stack: python
 sensitive: false          # payments or personal data: stricter bands, never the Solo pack
+language: es              # Gherkin dialect for specs; leave it out to follow the ticket's language
 branch_flow:
   base: develop
   branch: "feature/{ticket}-{slug}"
