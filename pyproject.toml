@@ -3,6 +3,8 @@ name = "codec-swarm"
 version = "0.1.0"
 description = "Local orchestrator that runs a swarm of Claude Code agents from a Jira ticket to a reviewed PR"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Manuel Alfaro", email = "malfaro.m29@gmail.com" }
 ]

@@ -202,3 +202,7 @@ src/codec_swarm/
   workspace/   clones, worktrees, local PRs, repos, secrets
   web/         FastAPI + Jinja + htmx dashboard
 ```
+
+## License
+
+[MIT](LICENSE) © 2026 Manuel Alfaro
