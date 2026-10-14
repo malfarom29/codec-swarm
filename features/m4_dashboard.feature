@@ -339,3 +339,15 @@ Feature: M4 dashboard
     When I start mission CODEC-1840 "Add from_cents" on codec-swarm-sandbox in gated mode
     And I start mission CODEC-1840 "Add from_cents" on codec-swarm-sandbox in gated mode
     Then the start of CODEC-1840 is queued only once
+
+  Scenario: A running mission can be stopped, then discarded, and its ticket used again
+    Given the dashboard sends missions to a worker queue
+    And I am signed in
+    And mission migration/phase-0 "Move the data" on codec-swarm-sandbox is waiting at its spec gate
+    And a command for migration/phase-0 is running in the worker
+    When I stop migration/phase-0
+    Then the worker cancels its running command
+    When I discard migration/phase-0
+    Then the board no longer lists migration/phase-0
+    And its mission page says it was discarded
+    And the copy form suggests the ticket "migration-phase-0" with the same title

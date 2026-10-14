@@ -66,6 +66,10 @@ def _line(e: Event) -> str | None:
     if e.kind == "gate.resolved":
         note = f" · “{p['note'][:160]}”" if p.get("note") else ""
         return f"{lane}{p.get('kind')} gate: {p.get('answer')}{note}"
+    if e.kind == "mission.stopped":
+        return "stopped by you" + ("; the running step was cancelled" if p.get("was_running") else "")
+    if e.kind == "mission.discarded":
+        return "discarded: worktrees and local branches set aside"
     if e.kind == "mission.restarted":
         return "mission restarted from the first role; earlier work was set aside"
     if e.kind == "lane.restarted":
@@ -329,7 +333,10 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
                 for role in roles
             ]))
         stages = [s for s in STAGES if s[0] != "intake"]
-        return {"m": view, "activity": activity, "groups": groups, "stages": stages, "stage_index": stage_index, "busy": busy(ticket)}
+        return {
+            "m": view, "activity": activity, "groups": groups, "stages": stages, "stage_index": stage_index, "busy": busy(ticket),
+            "discarded": ticket in service.discarded(), "stoppable": queue is not None and busy(ticket) and not queue.stopping(ticket),
+        }
 
     @app.get("/missions/new", response_class=HTMLResponse)
     async def new_mission(request: Request, ticket: str = "", title: str = "", description: str = "", repo_urls: str = ""):
@@ -450,7 +457,7 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
             response = render(request_, "new_mission.html", prefill=prefill, rows=base_rows(repo_urls), error=message)
             response.status_code = 400
             return response
-        if not restarting and (service.stored_request(ticket.strip()) or busy(ticket.strip())):
+        if not restarting and (ticket.strip() in service.missions_started() or busy(ticket.strip())):
             notice = f"{ticket.strip()} already exists, so nothing new was started. Use Restart to run it again."
             return RedirectResponse(f"/missions/{ticket.strip()}?{urlencode({'notice': notice})}", status_code=303)
         chosen = {k.removeprefix("base:"): str(v).strip() for k, v in form.items() if k.startswith("base:") and str(v).strip()}
@@ -551,6 +558,34 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
             message = f"{ticket} is working right now; try again once it waits at a gate or stops."
             return RedirectResponse(f"/missions/{ticket}?{urlencode({'error': message})}", status_code=303)
         return None
+
+    @app.post("/missions/{ticket:path}/stop")
+    async def stop_mission(ticket: str):
+        if queue is None:
+            message = "Stop needs the worker: run codec-swarm up without --in-process."
+            return RedirectResponse(f"/missions/{ticket}?{urlencode({'error': message})}", status_code=303)
+        queue.request_stop(ticket)
+        notice = "Stopping: the worker cancels the running step within a few seconds. Resume continues from the last checkpoint."
+        return RedirectResponse(f"/missions/{ticket}?{urlencode({'notice': notice})}", status_code=303)
+
+    @app.post("/missions/{ticket:path}/discard")
+    async def discard_mission(background: BackgroundTasks, ticket: str):
+        if (refused := busy_redirect(ticket)) is not None:
+            return refused
+        dispatch(background, ticket, "discard")
+        notice = f"{ticket} is being discarded. Its history stays here; the board no longer shows it."
+        return RedirectResponse(f"/missions/{ticket}?{urlencode({'notice': notice})}", status_code=303)
+
+    @app.get("/missions/{ticket:path}/copy", response_class=HTMLResponse)
+    async def copy_mission(request: Request, ticket: str):
+        stored = service.stored_request(ticket)
+        if stored is None:
+            return PlainTextResponse(f"No mission {ticket}", status_code=404)
+        r = stored[0]
+        suggested = re.sub(r"[^A-Za-z0-9._-]+", "-", r.ticket).strip("-.") or ""
+        prefill = {"ticket": suggested if suggested != r.ticket else "", "title": r.title, "description": r.description,
+                   "repo_urls": "\n".join(r.repo_urls), "autonomy": r.autonomy.value, "pack": r.pack, "model": r.model or ""}
+        return render(request, "new_mission.html", prefill=prefill, rows=base_rows(prefill["repo_urls"], r.bases), error="")
 
     @app.post("/missions/{ticket:path}/resume")
     async def resume_mission(background: BackgroundTasks, ticket: str):

@@ -27,6 +27,7 @@ class Worker:
         self._parent = parent  # the dashboard that started this worker: when it's gone, so is the worker
         self.id = f"{os.getpid()}-{uuid.uuid4().hex[:6]}"
         self._slots = anyio.Semaphore(max_missions)
+        self._running: dict[str, tuple[int, anyio.CancelScope]] = {}  # ticket -> (command id, its cancel scope)
 
     async def run(self, stop: anyio.Event | None = None) -> None:
         stop = stop or anyio.Event()
@@ -58,14 +59,27 @@ class Worker:
         else:
             self.queue.submit(command.ticket, "recover")
 
+    def _stop_requested(self) -> None:
+        """Cancel the running command of every mission I asked to stop; its pending ones are already dropped."""
+        for ticket in self.queue.take_stops():
+            running = self._running.get(ticket)
+            if running is not None:
+                running[1].cancel()
+            self.service.events.append(ticket, "mission.stopped", {"was_running": running is not None})
+
     async def _run(self, command: Command) -> None:
+        stopped = False
         try:
-            await execute(self.service, command.ticket, command.kind, command.args)
+            with anyio.CancelScope() as scope:
+                self._running[command.ticket] = (command.id, scope)
+                await execute(self.service, command.ticket, command.kind, command.args)
+            stopped = scope.cancelled_caught
         except Exception as error:
             self.queue.finish(command.id, f"{type(error).__name__}: {error}")
         else:
-            self.queue.finish(command.id)
+            self.queue.finish(command.id, "stopped by you" if stopped else None)
         finally:
+            self._running.pop(command.ticket, None)
             self._slots.release()
 
     async def _beat(self, stop: anyio.Event) -> None:
@@ -74,6 +88,7 @@ class Worker:
                 stop.set()  # orphaned: `codec-swarm up` died without stopping us; the next one starts its own worker
                 return
             self.queue.beat(self.id)
+            self._stop_requested()  # here, not in the claim loop: that one waits while every slot is busy
             with anyio.move_on_after(BEAT_SECONDS):
                 await stop.wait()
 

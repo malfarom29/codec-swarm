@@ -11,12 +11,17 @@
     </p>
   </div>
   <div class="missionactions" data-mission-actions>
+    {% if stoppable %}<form method="post" action="/missions/{{ m.ticket }}/stop" onsubmit="return confirm('Stop {{ m.ticket }}? The running step is cancelled; Resume continues from the last checkpoint.')"><button class="danger">Stop</button></form>{% endif %}
     <form method="post" action="/missions/{{ m.ticket }}/resume"><button {{ "disabled" if busy }} title="Continue from the last checkpoint, e.g. after an error or a server restart">Resume</button></form>
     <form method="post" action="/missions/{{ m.ticket }}/restart" onsubmit="return confirm('Restart {{ m.ticket }} from the first role? Its worktrees, local branches, local PRs and agent sessions are set aside; pushed branches stay.')">
       <button {{ "disabled" if busy }}>Restart</button></form>
     <a class="button" href="/missions/{{ m.ticket }}/restart">Restart with changes</a>
+    <a class="button" href="/missions/{{ m.ticket }}/copy" title="Start a new mission with this request, under another ticket">Copy to a new mission</a>
+    {% if not discarded %}<form method="post" action="/missions/{{ m.ticket }}/discard" onsubmit="return confirm('Discard {{ m.ticket }}? Its worktrees, local branches, saved progress and agent sessions are removed; pushed branches stay. Its history stays readable here.')">
+      <button {{ "disabled" if busy }} title="{{ 'Stop it first' if busy else 'Take it off the board for good' }}">Discard</button></form>{% endif %}
   </div>
 </div>
+{% if discarded %}<div class="panel note" data-discarded>This mission was discarded. Its history is below; <a href="/missions/{{ m.ticket }}/copy">copy it to a new mission</a> to run it again.</div>{% endif %}
 {% set back = "/missions/" ~ m.ticket %}
 {% if m.planning_gate %}{% set g = m.planning_gate %}{% include "_gate.html" %}{% endif %}
 <div class="panel lanesummary">

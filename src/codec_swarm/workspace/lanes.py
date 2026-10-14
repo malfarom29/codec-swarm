@@ -76,7 +76,7 @@ class Workspace:
             record.rename(record.with_name(f"{repo}.run{stamp}"))
         return branch
 
-    def discard(self, ticket: str) -> list[str]:
+    def discard(self, ticket: str, keep_as: str = "run") -> list[str]:
         """Remove a mission's worktrees and their local branches, and set its record aside. Returns what it removed.
 
         Remote branches are left alone: a pushed PR is updated by the next push of the same branch.
@@ -93,12 +93,16 @@ class Workspace:
                 subprocess.run(["git", "branch", "-D", branch], cwd=clone, capture_output=True)
             removed.append(f"{worktree.name}:{branch}")
         shutil.rmtree(folder, ignore_errors=True)
+        for parent in folder.parents:  # a ticket with "/" nests folders: drop the empty ones it leaves
+            if parent == self.worktrees or not parent.is_dir() or any(parent.iterdir()):
+                break
+            parent.rmdir()
         record = self.missions / ticket
         if record.exists():
             stamp = 1
-            while (self.missions / f"{ticket}.run{stamp}").exists():
+            while (self.missions / f"{ticket}.{keep_as}{stamp}").exists():
                 stamp += 1
-            record.rename(self.missions / f"{ticket}.run{stamp}")  # earlier runs' handoffs and specs stay readable
+            record.rename(self.missions / f"{ticket}.{keep_as}{stamp}")  # earlier runs' handoffs and specs stay readable
         return removed
 
     def clone(self, origin: str, name: str) -> Path:

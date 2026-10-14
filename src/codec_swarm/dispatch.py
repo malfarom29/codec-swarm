@@ -6,7 +6,7 @@ from typing import Any
 
 from codec_swarm.service import MissionRequest, MissionService
 
-KINDS = ("start", "answer", "recover", "restart", "restart_lane", "update", "pr_action")
+KINDS = ("start", "answer", "recover", "restart", "restart_lane", "update", "pr_action", "discard")
 
 
 async def execute(service: MissionService, ticket: str, kind: str, args: dict[str, Any]) -> None:
@@ -30,6 +30,8 @@ async def _run(service: MissionService, ticket: str, kind: str, a: dict[str, Any
             await service.recover(ticket)  # the answer already went through before the worker died
             return
         await service.answer(ticket, a.get("lane") or None, a["answer"], a.get("note", ""))
+    elif kind == "discard":
+        await service.discard(ticket)
     elif kind == "recover":
         await service.recover(ticket)
     elif kind == "restart":

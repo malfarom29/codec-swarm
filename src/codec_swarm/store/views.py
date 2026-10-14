@@ -92,7 +92,7 @@ def mission_view(events: list[Event]) -> MissionView:
     open_gates: dict[str, GateView] = {}
     for e in events:
         p = e.payload
-        if e.kind == "mission.restarted":  # what came before belongs to an earlier run
+        if e.kind in ("mission.restarted", "mission.discarded"):  # what came before belongs to an earlier run
             view = MissionView(ticket=view.ticket, started_at=e.created_at, earlier_cost_usd=view.earlier_cost_usd + view.cost_usd, runs=view.runs + 1)
             open_gates = {}
         view.last_event_id = e.id

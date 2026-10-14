@@ -1021,3 +1021,69 @@ def start_bad_ticket(web, ticket):
 @then(parsers.parse("the start of {ticket} is queued only once"))
 def queued_once(web, ticket):
     assert web["queue"].pending_count() == 1
+
+
+# --- stop, discard and copy -------------------------------------------------------------
+
+
+@given(parsers.parse("a command for {ticket} is running in the worker"))
+def running_command(web, ticket):
+    web["queue"].submit(ticket, "recover")
+    web["running"] = web["queue"].claim("worker-under-test")
+
+
+@when(parsers.parse("I stop {ticket}"))
+def stop(web, ticket):
+    assert web["client"].post(f"/missions/{ticket}/stop", follow_redirects=False).status_code == 303
+
+
+@then("the worker cancels its running command")
+def worker_cancels(web):
+    from codec_swarm.worker import Worker
+
+    worker = Worker(web["service"], web["queue"])
+
+    async def main():
+        cancelled = anyio.Event()
+
+        async def running():
+            with anyio.CancelScope() as scope:
+                worker._running[web["running"].ticket] = (web["running"].id, scope)
+                await anyio.sleep(30)
+            if scope.cancelled_caught:
+                cancelled.set()
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(running)
+            await anyio.sleep(0.05)
+            worker._stop_requested()
+            with anyio.fail_after(2):
+                await cancelled.wait()
+
+    anyio.run(main)
+    web["queue"].finish(web["running"].id, "stopped by you")
+    assert not web["queue"].is_busy(web["running"].ticket)
+
+
+@when(parsers.parse("I discard {ticket}"))
+def discard(web, ticket):
+    from codec_swarm.dispatch import execute
+
+    anyio.run(execute, web["service"], ticket, "discard", {})  # what the worker runs for the queued command
+
+
+@then(parsers.parse("the board no longer lists {ticket}"))
+def not_on_board(web, ticket):
+    assert f'data-ticket="{ticket}"' not in web["client"].get("/").text
+
+
+@then("its mission page says it was discarded")
+def page_discarded(web):
+    page = web["client"].get("/missions/migration/phase-0").text
+    assert "data-discarded" in page and "This mission was discarded" in page
+
+
+@then(parsers.parse('the copy form suggests the ticket "{suggested}" with the same title'))
+def copy_form(web, suggested):
+    page = web["client"].get("/missions/migration/phase-0/copy").text
+    assert f'value="{suggested}"' in page and 'value="Move the data"' in page and 'name="restart"' not in page

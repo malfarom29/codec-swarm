@@ -210,3 +210,5 @@ form.qa { flex: 1 1 100%; display: grid; gap: 10px; }
 .criteria li.gap::before { content: "○ "; color: var(--amber); }
 .criteria li.gap { color: var(--amber); }
 .scenlist { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+button.danger { border-color: var(--red); color: var(--red); }
+button.danger:hover { background: rgba(255, 59, 59, .12); }

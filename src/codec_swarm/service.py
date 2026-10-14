@@ -196,8 +196,12 @@ class MissionService:
         local = self.settings.role_override(pack, role)
         return LocalOverrides(model=forced_model, default_model=local.model, extra_mcp=tuple(local.extra_mcp), extra_skills=tuple(local.extra_skills))
 
-    def missions_started(self) -> list[str]:
-        return list(dict.fromkeys(e.mission for e in self.events.of_kind("mission.started")))
+    def missions_started(self, include_discarded: bool = False) -> list[str]:
+        started = list(dict.fromkeys(e.mission for e in self.events.of_kind("mission.started")))
+        if include_discarded:
+            return started
+        gone = self.discarded()
+        return [t for t in started if t not in gone]
 
     def view(self, ticket: str) -> MissionView:
         """The mission's view, rebuilt only when it has new events: pages ask for it many times a second."""
@@ -280,6 +284,27 @@ class MissionService:
         if note.strip():
             self.chat.send(ticket, repo, load_pack(runtime.pack_name).pack.lane_roles[0], note.strip())
         return await self.recover(ticket)
+
+    async def discard(self, ticket: str) -> list[str]:
+        """Take a mission off the board for good: worktrees, local branches, checkpoints, sessions and pending
+        messages go; its event history stays readable and its records move to missions/<ticket>.discardedN."""
+        if self.is_busy(ticket):
+            raise MissionBusy(f"{ticket} is working right now; stop it first")
+        stored = self.stored_request(ticket)
+        repos = {repo_name(u) for u in stored[0].repo_urls} if stored else set()
+        self._runtimes.pop(ticket, None)
+        await forget_threads(self.db, [ticket, *(lane_thread(ticket, r) for r in sorted(repos))])
+        removed = await anyio.to_thread.run_sync(lambda: self._workspace.discard(ticket, keep_as="discarded"))
+        self._sessions.forget(ticket)
+        self.chat.forget_pending(ticket)
+        self.envs.drop_overrides(ticket)
+        self.events.append(ticket, "mission.discarded", {"removed": removed})
+        return removed
+
+    def discarded(self) -> set[str]:
+        """Missions discarded since they last started."""
+        last_start: dict[str, int] = {e.mission: e.id for e in self.events.of_kind("mission.started")}
+        return {e.mission for e in self.events.of_kind("mission.discarded") if e.id > last_start.get(e.mission, 0)}
 
     async def update_from_base(self, ticket: str, repo: str, resolve_with_coder: bool = False) -> str:
         """Rebase a lane on its newest base. Clean: refresh its local PR and rerun the checks. Conflict: back out,

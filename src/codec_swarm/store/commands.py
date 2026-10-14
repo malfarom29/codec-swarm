@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS commands (
     ticket TEXT NOT NULL,
     kind TEXT NOT NULL,
     args TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',  -- pending | running | done | failed | interrupted
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending | running | done | failed | interrupted | stopped | cancelled
     error TEXT,
     worker TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -113,7 +113,7 @@ class CommandQueue:
         try:
             row = self._conn.execute(
                 """SELECT id, ticket, kind, args, status, error FROM commands
-                   WHERE status = 'pending' AND ticket NOT IN (SELECT ticket FROM commands WHERE status = 'running')
+                   WHERE status = 'pending' AND kind != 'stop' AND ticket NOT IN (SELECT ticket FROM commands WHERE status = 'running')
                    ORDER BY id LIMIT 1"""
             ).fetchone()
             if row is not None:
@@ -126,6 +126,31 @@ class CommandQueue:
             self._conn.execute("ROLLBACK")
             raise
         return _command(row) if row else None
+
+    def request_stop(self, ticket: str) -> None:
+        """Ask the worker to cancel what this mission is running and drop what is queued for it."""
+        self.submit(ticket, "stop")
+
+    def take_stops(self) -> list[str]:
+        """Missions I asked to stop: their pending commands are cancelled and the stop requests consumed."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            tickets = [r[0] for r in self._conn.execute("SELECT DISTINCT ticket FROM commands WHERE status = 'pending' AND kind = 'stop'").fetchall()]
+            for ticket in tickets:
+                self._conn.execute(
+                    "UPDATE commands SET status = 'cancelled', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+                    "WHERE ticket = ? AND status = 'pending'",
+                    (ticket,),
+                )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        return tickets
+
+    def stopping(self, ticket: str) -> bool:
+        row = self._conn.execute("SELECT 1 FROM commands WHERE ticket = ? AND status = 'pending' AND kind = 'stop' LIMIT 1", (ticket,)).fetchone()
+        return row is not None
 
     def finish(self, command_id: int, error: str | None = None) -> None:
         self._conn.execute(
