@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import subprocess
 import sys
@@ -40,6 +41,7 @@ from codec_swarm.store.views import MissionView, mission_view
 
 HERE = Path(__file__).parent
 COOKIE = "codec_session"
+TICKET = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")  # safe in URLs, paths, branch names and thread ids
 STAGES = [("intake", "Intake", "from Jira"), ("spec", "Spec", "Gherkin"), ("build", "Build", "TDD"), ("review", "Review", "code and QA"), ("judge", "Judge", "Definition of Done"), ("pr_ready", "PR ready", "branch-flow"), ("blocked", "Blocked", "failed or stuck")]
 AGENTS = [("specifier", "Specifier"), ("architect", "Architect"), ("backend-coder", "Backend coder"), ("frontend-coder", "Frontend coder"), ("coder", "Coder (Solo)"), ("reviewer", "Reviewer"), ("hardener", "Hardener"), ("qa", "QA")]
 JIRA_SYNC_SECONDS = 300
@@ -353,13 +355,13 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
     async def bases_partial(request: Request, repo_urls: str = ""):
         return render(request, "_bases.html", rows=base_rows(repo_urls))
 
-    @app.get("/missions/{ticket}", response_class=HTMLResponse)
+    @app.get("/missions/{ticket:path}", response_class=HTMLResponse)
     async def mission(request: Request, ticket: str, error: str = "", notice: str = ""):
         if not service.events.list(ticket):
             return PlainTextResponse(f"No mission {ticket}", status_code=404)
         return render(request, "mission.html", error=error, notice=notice, **mission_context(ticket))
 
-    @app.get("/partials/missions/{ticket}", response_class=HTMLResponse)
+    @app.get("/partials/missions/{ticket:path}", response_class=HTMLResponse)
     async def mission_partial(request: Request, ticket: str):
         return render(request, "_mission.html", **mission_context(ticket))
 
@@ -441,6 +443,16 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
         jev: str = Form(""),
     ):
         form = await request_.form()
+        restarting = bool(form.get("restart"))
+        if not restarting and not TICKET.fullmatch(ticket.strip()):
+            prefill = {"ticket": ticket, "title": title, "description": description, "repo_urls": repo_urls}
+            message = "A ticket can use letters, numbers, '.', '_' and '-' (like CUBO-12 or migration-phase-0); no '/' or spaces."
+            response = render(request_, "new_mission.html", prefill=prefill, rows=base_rows(repo_urls), error=message)
+            response.status_code = 400
+            return response
+        if not restarting and (service.stored_request(ticket.strip()) or busy(ticket.strip())):
+            notice = f"{ticket.strip()} already exists, so nothing new was started. Use Restart to run it again."
+            return RedirectResponse(f"/missions/{ticket.strip()}?{urlencode({'notice': notice})}", status_code=303)
         chosen = {k.removeprefix("base:"): str(v).strip() for k, v in form.items() if k.startswith("base:") and str(v).strip()}
         env_text = {k.removeprefix("env:"): str(v) for k, v in form.items() if k.startswith("env:") and str(v).strip()}
         if form.get("restart"):
@@ -494,7 +506,7 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
         service.settings.set_orchestration(Orchestration(jev_enabled=bool(jev_enabled), gate_threshold=gate_threshold, gate_margin=gate_margin))
         return RedirectResponse("/orchestration?saved=1", status_code=303)
 
-    @app.get("/missions/{ticket}/prs/{repo}", response_class=HTMLResponse)
+    @app.get("/missions/{ticket:path}/prs/{repo}", response_class=HTMLResponse)
     async def local_pr(request: Request, ticket: str, repo: str, error: str = "", done: str = "", target: str = ""):
         loaded = service.local_pr(ticket, repo)
         if loaded is None:
@@ -517,7 +529,7 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
             nothing=service.lane_state(pr),
         )
 
-    @app.post("/missions/{ticket}/prs/{repo}")
+    @app.post("/missions/{ticket:path}/prs/{repo}")
     async def pr_action(background: BackgroundTasks, ticket: str, repo: str, action: str = Form(...), target: str = Form(...)):
         back = f"/missions/{ticket}/prs/{repo}"
         problem = None
@@ -540,21 +552,21 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
             return RedirectResponse(f"/missions/{ticket}?{urlencode({'error': message})}", status_code=303)
         return None
 
-    @app.post("/missions/{ticket}/resume")
+    @app.post("/missions/{ticket:path}/resume")
     async def resume_mission(background: BackgroundTasks, ticket: str):
         if (refused := busy_redirect(ticket)) is not None:
             return refused
         dispatch(background, ticket, "recover")
         return RedirectResponse(f"/missions/{ticket}?{urlencode({'notice': 'Resuming from the last checkpoint.'})}", status_code=303)
 
-    @app.post("/missions/{ticket}/restart")
+    @app.post("/missions/{ticket:path}/restart")
     async def restart_mission(background: BackgroundTasks, ticket: str):
         if (refused := busy_redirect(ticket)) is not None:
             return refused
         dispatch(background, ticket, "restart")
         return RedirectResponse(f"/missions/{ticket}?{urlencode({'notice': 'Restarting from the first role.'})}", status_code=303)
 
-    @app.get("/missions/{ticket}/restart", response_class=HTMLResponse)
+    @app.get("/missions/{ticket:path}/restart", response_class=HTMLResponse)
     async def restart_form(request: Request, ticket: str):
         stored = service.stored_request(ticket)
         if stored is None:
@@ -564,14 +576,14 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
                    "autonomy": r.autonomy.value, "pack": r.pack, "model": r.model or "", "restart": True}
         return render(request, "new_mission.html", prefill=prefill, rows=base_rows(prefill["repo_urls"], r.bases), error="")
 
-    @app.post("/missions/{ticket}/lanes/{repo}/restart")
+    @app.post("/missions/{ticket:path}/lanes/{repo}/restart")
     async def restart_lane(background: BackgroundTasks, ticket: str, repo: str, note: str = Form("")):
         if (refused := busy_redirect(ticket)) is not None:
             return refused
         dispatch(background, ticket, "restart_lane", repo=repo, note=note)
         return RedirectResponse(f"/missions/{ticket}?{urlencode({'notice': f'Restarting the {repo} lane from its first role.'})}", status_code=303)
 
-    @app.post("/missions/{ticket}/lanes/{repo}/update")
+    @app.post("/missions/{ticket:path}/lanes/{repo}/update")
     async def update_lane(background: BackgroundTasks, ticket: str, repo: str, resolve: str = Form(""), back: str = Form("")):
         if (refused := busy_redirect(ticket)) is not None:
             return refused
@@ -579,13 +591,13 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
         target = back if back.startswith("/") else f"/missions/{ticket}"
         return RedirectResponse(f"{target}?{urlencode({'notice': f'Updating {repo} from its base; the result shows in Activity.'})}", status_code=303)
 
-    @app.post("/missions/{ticket}/chat")
+    @app.post("/missions/{ticket:path}/chat")
     async def send_chat(ticket: str, role: str = Form(...), lane: str = Form(""), text: str = Form(...)):
         if text.strip():
             service.send_message(ticket, lane, role, text.strip())
         return RedirectResponse(f"/missions/{ticket}?tab=agents", status_code=303)
 
-    @app.post("/missions/{ticket}/attach")
+    @app.post("/missions/{ticket:path}/attach")
     async def open_terminal(ticket: str, role: str = Form(...), lane: str = Form("")):
         command = service.attach_command(ticket, lane, role)
         if command is None:
@@ -665,7 +677,7 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
             return render_repo(request, service.repos.detail(name), error=str(error), config_text=config, domain_text=domain, status=400)
         return RedirectResponse(f"/repos/{name}?saved=1", status_code=303)
 
-    @app.post("/missions/{ticket}/gates")
+    @app.post("/missions/{ticket:path}/gates")
     async def answer_gate(
         request: Request, background: BackgroundTasks, ticket: str, lane: str = Form(""), answer: str = Form(...),
         back: str = Form(""), note: str = Form(""), kind: str = Form(""), after: str = Form(""),
@@ -718,4 +730,12 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
 
         return EventSourceResponse(changes())
 
+    # A ticket may contain "/" (older missions), so mission routes take a path. A path parameter is greedy:
+    # "/missions/{ticket}/restart" would also match ".../lanes/api/restart". So among those routes, the ones with
+    # more segments are tried first, and the bare mission pages last, after every fixed route.
+    def order(route: Any) -> tuple[int, int]:
+        path = getattr(route, "path", "")
+        return (1, -path.count("/")) if "{ticket:path}" in path else (0, 0)  # fixed routes (like /missions/new) first
+
+    app.router.routes.sort(key=order)
     return app

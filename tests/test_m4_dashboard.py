@@ -1002,3 +1002,22 @@ def count_full_reads(web, a, b, c, ticket, monkeypatch):
 @then("none of them read the whole event log")
 def no_full_reads(web):
     assert web["full_reads"] == []
+
+
+# --- ticket names ---------------------------------------------------------------------
+
+
+@then(parsers.parse("the page is the mission {ticket}"))
+def page_is_mission(web, ticket):
+    assert f'<span class="id">{ticket}</span>' in web["page"] and "data-tab=\"dod\"" in web["page"]
+
+
+@when(parsers.parse('I start a mission with the ticket "{ticket}"'))
+def start_bad_ticket(web, ticket):
+    form = {"ticket": ticket, "title": "t", "repo_urls": "codec-swarm-sandbox", "pack": "codec-standard"}
+    web["response"] = web["client"].post("/missions", data=form, follow_redirects=False)
+
+
+@then(parsers.parse("the start of {ticket} is queued only once"))
+def queued_once(web, ticket):
+    assert web["queue"].pending_count() == 1

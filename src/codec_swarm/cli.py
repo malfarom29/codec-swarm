@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -77,6 +78,8 @@ def parse_bases(values: list[str], repos: list[str]) -> dict[str, str]:
 
 async def run_mission(args: argparse.Namespace) -> int:
     service = MissionService(Path(args.root))
+    if not args.recover and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", args.ticket):
+        raise SystemExit(f"--ticket {args.ticket!r}: use letters, numbers, '.', '_' and '-' only (no '/' or spaces)")
     request = MissionRequest(
         ticket=args.ticket, title=args.title, repo_urls=tuple(args.repo_url), description=args.description,
         autonomy=Autonomy(args.autonomy), pack=args.pack, model=args.model, no_jev=args.no_jev,

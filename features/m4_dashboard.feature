@@ -320,3 +320,22 @@ Feature: M4 dashboard
     And mission CODEC-1830 "Add from_cents" on codec-swarm-sandbox is waiting at its spec gate
     When I count full event-log reads while opening "/", "/inbox", "/requests" and the mission page of CODEC-1830
     Then none of them read the whole event log
+
+  Scenario: A mission whose ticket has a slash still opens
+    Given I am signed in
+    And mission migration/phase-0 "Move the data" on codec-swarm-sandbox is waiting at its spec gate
+    When I open the mission page of migration/phase-0
+    Then the page is the mission migration/phase-0
+
+  Scenario: New missions refuse tickets that break URLs and paths
+    Given I am signed in
+    When I start a mission with the ticket "migration/phase-1"
+    Then the form says "no '/' or spaces"
+    And no mission migration/phase-1 was started
+
+  Scenario: Starting a mission that already exists opens it instead of queuing another start
+    Given the dashboard sends missions to a worker queue
+    And I am signed in
+    When I start mission CODEC-1840 "Add from_cents" on codec-swarm-sandbox in gated mode
+    And I start mission CODEC-1840 "Add from_cents" on codec-swarm-sandbox in gated mode
+    Then the start of CODEC-1840 is queued only once
