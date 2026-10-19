@@ -164,7 +164,7 @@ For a repo marked `sensitive: true`, values that look like live credentials are 
 ## Dashboard settings
 
 - **Harness.** For each role you can override the model (never below the role's floor) and add MCP servers or skills; nothing can be removed. To make a new MCP server available, add it to `mcp_catalog` in the pack and put its token in `.env` as `${env:NAME}`.
-- **Plugins.** Agent sessions don't load your own Claude Code plugins. List a plugin's folder under `plugins:` at the top of the pack to give it to every role, or under one role (`plugins: [~/.claude/plugins/marketplaces/ponytail]`) to give it only to that role. The Harness page and each mission's Agents tab show which plugins a role loads.
+- **Plugins.** Your own Claude Code plugins reach agents only when the pack lists them; see [Personal plugins](#personal-plugins).
 - **Orchestration.** Turn Jev on or off, and tune the command-gate threshold and margin.
 - **Jira.** Until you connect Jira, the Intake column shows example tickets. To connect, enter your site, email and API token: the token is checked against Jira, then saved only to `~/.codec-swarm/.env`. Tickets matching the JQL sync every 5 minutes. The default JQL is your tasks and subtasks in To Do or In Progress.
 
@@ -183,6 +183,29 @@ Each agent's system prompt is built from these layers:
 4. the role's own prompt
 5. the mission
 6. the commands this repo allows
+
+### Personal plugins
+
+Agent sessions load only the target repo's own `.claude/` settings, so Claude Code plugins you installed for yourself don't reach the agents. To give them one, list the plugin's folder in the pack: at the top level for every role, or under a role for that role only.
+
+```yaml
+# packs/codec-standard/pack.yaml
+plugins:                       # every role
+  - ~/code/my-team-conventions
+
+roles:
+  backend-coder:
+    model: sonnet
+    skills: [tdd]
+    plugins: [~/.claude/plugins/marketplaces/ponytail]   # this role only
+```
+
+- **Which folder:** the one that contains `.claude-plugin/plugin.json`. For a plugin installed from a marketplace, use `~/.claude/plugins/marketplaces/<name>`. Its path stays the same across updates; the versioned copy under `~/.claude/plugins/cache/` doesn't.
+- **What gets loaded:** the plugin's skills, commands and hooks, in that role's sessions. A pack that extends another (like `solo`) inherits its top-level `plugins:`; per-role plugins apply only to roles with that name.
+- **A wrong path** stops the mission at its first step with an error naming the folder, instead of running without the plugin.
+- **To check,** open the Harness page (a Plugins column per role, plus the plugins every role gets) or a mission's Agents tab (a *plugin* badge on each role's panel). Restart `codec-swarm up` after editing the pack.
+- **Personal paths:** these paths point at your machine, so keep the edit local (uncommitted) or in a pack of your own (`codec-swarm mission --pack ./my-pack`, with `extends: codec-standard`).
+- **Hooks:** a plugin's hooks run inside agent sessions and aren't checked by codec-swarm's command gate. Only add plugins you trust.
 
 ## Development
 
