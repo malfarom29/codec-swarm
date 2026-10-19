@@ -30,6 +30,7 @@ class PackDefinition(BaseModel, frozen=True):
     pack: Pack
     roles: dict[str, RoleSpec]
     mcp_catalog: dict[str, dict[str, Any]]
+    plugins: tuple[str, ...] = ()  # Claude Code plugin folders every session loads (pack.yaml `plugins:`)
     base: Path | None = None  # the pack this one extends; its files fill in what this pack lacks
 
     def _find(self, relative: str) -> Path | None:
@@ -76,4 +77,5 @@ def load_pack(name_or_path: str | Path) -> PackDefinition:
     for role in (*pack.planning_roles, *pack.lane_roles):
         roles.setdefault(role, RoleSpec())
     catalog = {**(base.mcp_catalog if base else {}), **raw.get("mcp_catalog", {})}
-    return PackDefinition(root=root, pack=pack, roles=roles, mcp_catalog=catalog, base=base.root if base else None)
+    plugins = tuple(dict.fromkeys([*(base.plugins if base else ()), *raw.get("plugins", [])]))
+    return PackDefinition(root=root, pack=pack, roles=roles, mcp_catalog=catalog, plugins=plugins, base=base.root if base else None)

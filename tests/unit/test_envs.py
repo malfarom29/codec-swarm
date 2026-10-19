@@ -103,3 +103,24 @@ CTX = GateContext(ticket="T", role="backend-coder", worktree=Path("/tmp/lane"), 
 def test_agents_cannot_print_managed_values(tool, tool_input, asks):
     decision = hard_rules(tool, tool_input, CTX)
     assert (decision is not None and decision.action is Action.ASK) is asks
+
+
+def test_pack_plugins_reach_every_session_and_a_wrong_folder_is_named(tmp_path):
+    import shutil
+
+    from codec_swarm.domain import Mission
+    from codec_swarm.harness import load_pack, resolve_session
+    from codec_swarm.harness.config import RepoConfig
+
+    plugin = tmp_path / "ponytail"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text('{"name": "ponytail"}')
+    pack_dir = tmp_path / "pack"
+    shutil.copytree(load_pack("codec-standard").root, pack_dir)
+    pack_yaml = pack_dir / "pack.yaml"
+    pack_yaml.write_text(pack_yaml.read_text() + f"\nplugins:\n  - {plugin}\n")
+    spec = resolve_session(load_pack(pack_dir), RepoConfig(stack="python"), "reviewer", tmp_path, Mission(ticket="T", repo="r"))
+    assert spec.plugins == (str(plugin),)
+    pack_yaml.write_text(pack_yaml.read_text().replace(str(plugin), str(tmp_path / "nope")))
+    with pytest.raises(ValueError, match="nope"):
+        resolve_session(load_pack(pack_dir), RepoConfig(stack="python"), "reviewer", tmp_path, Mission(ticket="T", repo="r"))

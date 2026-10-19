@@ -53,6 +53,7 @@ class SessionSpec(BaseModel, frozen=True):
     # The repo's managed environment: passed to the session, never dumped, logged or put in a prompt.
     env: dict[str, str] = Field(default_factory=dict, exclude=True, repr=False)
     env_file: str = ".env"
+    plugins: tuple[str, ...] = ()  # local Claude Code plugin folders, loaded explicitly: user-level plugins never are
 
 
 def _unique(*groups: tuple[str, ...]) -> tuple[str, ...]:
@@ -161,7 +162,16 @@ def resolve_session(
         mcp_servers={name: pack.mcp_catalog[name] for name in mcp_names},
         skills=_unique(spec.skills, role_extras.extra_skills if role_extras else (), extras.skills, overrides.extra_skills),
         max_turns=overrides.max_turns or spec.max_turns,
+        plugins=_plugin_paths(pack),
     )
+
+
+def _plugin_paths(pack: PackDefinition) -> tuple[str, ...]:
+    paths = tuple(str(Path(p).expanduser()) for p in pack.plugins)
+    missing = [p for p in paths if not (Path(p) / ".claude-plugin" / "plugin.json").exists()]
+    if missing:
+        raise ValueError(f"pack {pack.pack.name} lists plugins that aren't plugin folders: {', '.join(missing)}")
+    return paths
 
 
 def resolve_env_refs(value: Any, env: dict[str, str] | None = None) -> Any:
