@@ -162,12 +162,12 @@ def resolve_session(
         mcp_servers={name: pack.mcp_catalog[name] for name in mcp_names},
         skills=_unique(spec.skills, role_extras.extra_skills if role_extras else (), extras.skills, overrides.extra_skills),
         max_turns=overrides.max_turns or spec.max_turns,
-        plugins=_plugin_paths(pack),
+        plugins=_plugin_paths(pack, role),
     )
 
 
-def _plugin_paths(pack: PackDefinition) -> tuple[str, ...]:
-    paths = tuple(str(Path(p).expanduser()) for p in pack.plugins)
+def _plugin_paths(pack: PackDefinition, role: str) -> tuple[str, ...]:
+    paths = tuple(str(Path(p).expanduser()) for p in pack.plugins_for(role))
     missing = [p for p in paths if not (Path(p) / ".claude-plugin" / "plugin.json").exists()]
     if missing:
         raise ValueError(f"pack {pack.pack.name} lists plugins that aren't plugin folders: {', '.join(missing)}")

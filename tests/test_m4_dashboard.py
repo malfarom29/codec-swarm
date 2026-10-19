@@ -1093,3 +1093,25 @@ def copy_form(web, suggested):
 def harness_plugins(web):
     html = web["response"].text
     assert 'data-plugins="codec-standard"' in html and 'data-plugins="solo"' in html
+
+
+@given(parsers.parse("the backend-coder's pack gives it the plugin {path}"))
+def role_plugin(web, path, monkeypatch, tmp_path):
+    import shutil
+
+    import codec_swarm.web.app as web_app
+    from codec_swarm.harness import load_pack as real_load_pack
+
+    pack_dir = tmp_path / "pack-with-plugin"
+    shutil.copytree(real_load_pack("codec-standard").root, pack_dir)
+    text = (pack_dir / "pack.yaml").read_text().replace("    plugins: [~/.claude/plugins/marketplaces/ponytail]\n", "")
+    text = text.replace("plugins:\n  - ~/.claude/plugins/marketplaces/ponytail\n", "")
+    (pack_dir / "pack.yaml").write_text(text.replace("  backend-coder:\n", f"  backend-coder:\n    plugins: [{path}]\n", 1))
+    monkeypatch.setattr(web_app, "load_pack", lambda name: real_load_pack(pack_dir) if name == "codec-standard" else real_load_pack(name))
+
+
+@then("the backend-coder's panel shows the plugin ponytail and the reviewer's shows none")
+def agents_plugins(web):
+    coder = _section(web, 'data-lane="codec-swarm-sandbox" data-role="backend-coder"', "</section>")
+    reviewer = _section(web, 'data-lane="codec-swarm-sandbox" data-role="reviewer"', "</section>")
+    assert "plugin ponytail" in coder and "data-plugin" not in reviewer

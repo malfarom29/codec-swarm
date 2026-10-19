@@ -124,3 +124,17 @@ def test_pack_plugins_reach_every_session_and_a_wrong_folder_is_named(tmp_path):
     pack_yaml.write_text(pack_yaml.read_text().replace(str(plugin), str(tmp_path / "nope")))
     with pytest.raises(ValueError, match="nope"):
         resolve_session(load_pack(pack_dir), RepoConfig(stack="python"), "reviewer", tmp_path, Mission(ticket="T", repo="r"))
+
+
+def test_a_role_can_have_its_own_plugins(tmp_path):
+    import shutil
+
+    from codec_swarm.harness import load_pack
+
+    pack_dir = tmp_path / "pack"
+    shutil.copytree(load_pack("codec-standard").root, pack_dir)
+    text = (pack_dir / "pack.yaml").read_text().replace("plugins:\n  - ~/.claude/plugins/marketplaces/ponytail\n", "")
+    text = text.replace("    plugins: [~/.claude/plugins/marketplaces/ponytail]\n", "")
+    (pack_dir / "pack.yaml").write_text(text.replace("  backend-coder:\n", "  backend-coder:\n    plugins: [/plugins/ponytail]\n", 1))
+    pack = load_pack(pack_dir)
+    assert pack.plugins_for("backend-coder") == ("/plugins/ponytail",) and pack.plugins_for("reviewer") == ()

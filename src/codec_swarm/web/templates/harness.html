@@ -6,15 +6,15 @@
 {% if error %}<div class="panel note bad">{{ error }}</div>{% elif saved %}<div class="panel note">Saved {{ saved }}. It applies from the next step of any mission.</div>{% endif %}
 {% for p in packs %}
 <h2>Pack {{ p.pack.name }}</h2>
-<p class="sub" data-plugins="{{ p.pack.name }}">Plugins in every session: {% for path in p.plugins %}<span class="mono">{{ path }}</span>{{ ", " if not loop.last }}{% else %}none{% endfor %} <span class="muted">(pack.yaml <span class="mono">plugins:</span>)</span></p>
+<p class="sub" data-plugins="{{ p.pack.name }}">Plugins for every role: {% for path in p.plugins %}<span class="mono">{{ path }}</span>{{ ", " if not loop.last }}{% else %}none{% endfor %} <span class="muted">(pack.yaml <span class="mono">plugins:</span>)</span></p>
 <div class="panel tablewrap">
 <table class="harness">
-  <thead><tr><th>Role</th><th>Model</th><th>Floor</th><th>MCP servers</th><th>Skills</th><th>Max turns</th></tr></thead>
+  <thead><tr><th>Role</th><th>Model</th><th>Floor</th><th>MCP servers</th><th>Skills</th><th>Plugins</th><th>Max turns</th></tr></thead>
   <tbody>
   {% for role in p.pack.planning_roles + p.pack.lane_roles %}{% set r = p.roles[role] %}{% set o = overrides[(p.pack.name, role)] %}
     <tr data-role="{{ role }}" id="{{ p.pack.name }}-{{ role }}"><td>{{ role }}{% if r.plans_lanes %} <span class="pill aqua">plans lanes</span>{% endif %}</td><td class="mono">{{ r.model }}{% if o.model %} → <span class="pill amber">{{ o.model }}</span>{% endif %}</td><td class="mono">{{ r.min_model }}</td>
-      <td class="mono">{{ r.mcp | join(", ") or "none" }}{% for x in o.extra_mcp %} <span class="pill amber">+{{ x }}</span>{% endfor %}</td><td class="mono">{{ r.skills | join(", ") or "none" }}{% for x in o.extra_skills %} <span class="pill amber">+{{ x }}</span>{% endfor %}</td><td class="mono">{{ r.max_turns }}</td></tr>
-    <tr class="edit" data-edit="{{ p.pack.name }}.{{ role }}"><td colspan="6">
+      <td class="mono">{{ r.mcp | join(", ") or "none" }}{% for x in o.extra_mcp %} <span class="pill amber">+{{ x }}</span>{% endfor %}</td><td class="mono">{{ r.skills | join(", ") or "none" }}{% for x in o.extra_skills %} <span class="pill amber">+{{ x }}</span>{% endfor %}</td><td class="mono" data-role-plugins>{{ r.plugins | map("replace", "~/.claude/plugins/marketplaces/", "") | join(", ") or "none" }}</td><td class="mono">{{ r.max_turns }}</td></tr>
+    <tr class="edit" data-edit="{{ p.pack.name }}.{{ role }}"><td colspan="7">
       <details {{ "open" if saved == p.pack.name ~ "." ~ role }}><summary>Edit {{ role }}</summary>
       <form method="post" action="/harness/{{ p.pack.name }}/{{ role }}" class="inline">
         <label>Model

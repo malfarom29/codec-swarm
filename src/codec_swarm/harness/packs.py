@@ -22,6 +22,7 @@ class RoleSpec(BaseModel, frozen=True):
     plans_lanes: bool = False  # this role's handoff includes the lane order
     mcp: tuple[str, ...] = ()
     skills: tuple[str, ...] = ()
+    plugins: tuple[str, ...] = ()  # Claude Code plugin folders only this role's sessions load
     max_turns: int = 40
 
 
@@ -48,6 +49,11 @@ class PackDefinition(BaseModel, frozen=True):
         if prompt is None:
             raise FileNotFoundError(f"pack {self.pack.name} has no prompt for role {role}")
         return prompt
+
+    def plugins_for(self, role: str) -> tuple[str, ...]:
+        """The pack's plugins for every role, then this role's own."""
+        own = self.roles[role].plugins if role in self.roles else ()
+        return tuple(dict.fromkeys([*self.plugins, *own]))
 
     def stacks(self) -> list[str]:
         roots = [self.root / "stacks", *([self.base / "stacks"] if self.base else [])]

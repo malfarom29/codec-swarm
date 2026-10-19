@@ -352,3 +352,10 @@ Feature: M4 dashboard
     Then the board no longer lists migration/phase-0
     And its mission page says it was discarded
     And the copy form suggests the ticket "migration-phase-0" with the same title
+
+  Scenario: The Agents tab shows the plugins each role's sessions load
+    Given I am signed in
+    And the backend-coder's pack gives it the plugin /plugins/ponytail
+    And mission CODEC-1850 "Add from_cents" on codec-swarm-sandbox is waiting at its pr gate
+    When I open the mission page of CODEC-1850
+    Then the backend-coder's panel shows the plugin ponytail and the reviewer's shows none

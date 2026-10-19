@@ -314,13 +314,14 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
         activity = [(e.created_at[11:19], line) for e in events if (line := _line(e))][-60:][::-1]
         stage_index = {key: i for i, (key, _, _) in enumerate(s for s in STAGES if s[0] != "intake")}
         chat = service.chat.list(ticket)
-        groups = []  # (lane key, heading, [(role, lines, stats, working, messages, attach command)])
+        groups = []  # (lane key, heading, [(role, lines, stats, working, messages, attach command, plugins)])
         sources = [("", "planning", view.planning_roles, view.planning_role, view.planning_role is not None)]
         sources += [(repo, repo, lane.roles, lane.current_role, lane.status == "running") for repo, lane in view.lanes.items()]
         try:
-            pack = load_pack(view.pack).pack if view.pack else None
+            definition = load_pack(view.pack) if view.pack else None
         except (FileNotFoundError, ValueError):  # a pack renamed since the mission ran
-            pack = None
+            definition = None
+        pack = definition.pack if definition else None
         for key, heading, stats, current, running in sources:
             terminals = _terminals(events, key)
             planned = (pack.planning_roles if key == "" else pack.lane_roles) if pack else []
@@ -329,7 +330,8 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
                 continue
             groups.append((key, heading, [
                 (role, terminals.get(role, []), stats.get(role), running and current == role,
-                 [c for c in chat if c.lane == key and c.role == role], service.attach_command(ticket, key, role))
+                 [c for c in chat if c.lane == key and c.role == role], service.attach_command(ticket, key, role),
+                 definition.plugins_for(role) if definition else ())
                 for role in roles
             ]))
         stages = [s for s in STAGES if s[0] != "intake"]
