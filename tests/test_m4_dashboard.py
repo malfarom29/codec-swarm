@@ -1087,3 +1087,9 @@ def page_discarded(web):
 def copy_form(web, suggested):
     page = web["client"].get("/missions/migration/phase-0/copy").text
     assert f'value="{suggested}"' in page and 'value="Move the data"' in page and 'name="restart"' not in page
+
+
+@then("the harness page lists each pack's plugins")
+def harness_plugins(web):
+    html = web["response"].text
+    assert 'data-plugins="codec-standard"' in html and 'data-plugins="solo"' in html

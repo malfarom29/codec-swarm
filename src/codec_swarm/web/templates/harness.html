@@ -6,6 +6,7 @@
 {% if error %}<div class="panel note bad">{{ error }}</div>{% elif saved %}<div class="panel note">Saved {{ saved }}. It applies from the next step of any mission.</div>{% endif %}
 {% for p in packs %}
 <h2>Pack {{ p.pack.name }}</h2>
+<p class="sub" data-plugins="{{ p.pack.name }}">Plugins in every session: {% for path in p.plugins %}<span class="mono">{{ path }}</span>{{ ", " if not loop.last }}{% else %}none{% endfor %} <span class="muted">(pack.yaml <span class="mono">plugins:</span>)</span></p>
 <div class="panel tablewrap">
 <table class="harness">
   <thead><tr><th>Role</th><th>Model</th><th>Floor</th><th>MCP servers</th><th>Skills</th><th>Max turns</th></tr></thead>

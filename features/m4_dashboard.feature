@@ -56,6 +56,7 @@ Feature: M4 dashboard
     When I open "/harness"
     Then the page lists the specifier with model opus and floor sonnet
     And the page lists the backend-coder's MCP server context7
+    And the harness page lists each pack's plugins
 
   Scenario: The orchestration page says whether Jev is on and shows the judge bands
     Given I am signed in
