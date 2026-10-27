@@ -359,3 +359,12 @@ Feature: M4 dashboard
     And mission CODEC-1850 "Add from_cents" on codec-swarm-sandbox is waiting at its pr gate
     When I open the mission page of CODEC-1850
     Then the backend-coder's panel shows the plugin ponytail and the reviewer's shows none
+
+  Scenario: A base pushed after the last fetch is still accepted
+    Given I am signed in
+    And a local origin repo "billing" with no swarm config
+    And I added that repo on the Repos page
+    And I saved billing's local config with stack python and base develop
+    And origin "billing" also has a branch feature/late
+    When I start mission CODEC-1860 on billing from feature/late
+    Then mission CODEC-1860 starts billing from feature/late

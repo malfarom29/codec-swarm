@@ -467,7 +467,11 @@ def create_app(service: MissionService, token: str, queue: CommandQueue | None =
         if form.get("restart"):
             service.envs.drop_overrides(ticket.strip())  # a restart with changes takes only the overrides in this form
         rows = base_rows(repo_urls, chosen)
-        unknown = [f"{r['name']} has no branch {r['value']!r} on origin" for r in rows if r["branches"] and r["value"] and r["value"] not in r["branches"]]
+        unknown = [
+            f"{r['name']} has no branch {r['value']!r} on origin" for r in rows
+            if r["branches"] and r["value"] and r["value"] not in r["branches"]
+            and not await anyio.to_thread.run_sync(service.repos.has_branch, r["name"], r["value"])  # pushed since the last fetch?
+        ]
         for repo, text in env_text.items():
             try:
                 parse_env(text)

@@ -106,6 +106,13 @@ class RepoCatalog:
         out = subprocess.run(["git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"], cwd=clone, capture_output=True, text=True).stdout
         return [b.removeprefix("origin/") for b in out.split() if b not in ("origin", "origin/HEAD")]
 
+    def has_branch(self, name: str, branch: str) -> bool:
+        """Is the branch on origin? Fetches first when the last fetch doesn't know it (pushed since)."""
+        if branch in self.branches(name):
+            return True
+        subprocess.run(["git", "fetch", "--quiet", "--prune", "origin"], cwd=self._clone(name), capture_output=True)
+        return branch in self.branches(name)
+
     def configured_base(self, name: str) -> str | None:
         clone = self._clone(name)
         try:
